@@ -71,6 +71,13 @@ impl LiquidityPoolContract {
         storage::set_admin(&env, &new_admin);
     }
 
+
+    /// Upgrade the contract WASM — admin only
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
     pub fn get_admin(env: Env) -> Address {
         storage::get_admin(&env)
     }

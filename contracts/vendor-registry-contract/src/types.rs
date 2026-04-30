@@ -7,13 +7,13 @@ pub enum DataKey {
     Admin,
 
     // Persistent storage
-    Merchant(Address),
-    MerchantCount,
+    Vendor(Address),
+    VendorCount,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MerchantInfo {
+pub struct VendorInfo {
     pub name: String,
     pub registration_date: u64,
     pub active: bool,

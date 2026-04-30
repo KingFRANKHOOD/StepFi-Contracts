@@ -1,6 +1,6 @@
 #![no_std]
 use liquidity_pool_contract::LiquidityPoolContractClient;
-use merchant_registry_contract::MerchantRegistryContractClient;
+use vendor_registry_contract::VendorRegistryContractClient;
 use parameters_contract::ProtocolParameters;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
@@ -30,7 +30,7 @@ impl CreditLineContract {
         env: Env,
         admin: Address,
         reputation_contract: Address,
-        merchant_registry: Address,
+        vendor_registry: Address,
         liquidity_pool: Address,
         token: Address,
     ) {
@@ -43,7 +43,7 @@ impl CreditLineContract {
 
         storage::set_admin(&env, &admin);
         storage::set_reputation_contract(&env, &reputation_contract);
-        storage::set_merchant_registry(&env, &merchant_registry);
+        storage::set_vendor_registry(&env, &vendor_registry);
         storage::set_liquidity_pool(&env, &liquidity_pool);
         storage::set_token(&env, &token);
     }
@@ -51,7 +51,7 @@ impl CreditLineContract {
     pub fn create_loan(
         env: Env,
         user: Address,
-        merchant: Address,
+        vendor: Address,
         total_amount: i128,
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
@@ -59,7 +59,7 @@ impl CreditLineContract {
         user.require_auth();
 
         Self::validate_guarantee(&env, total_amount, guarantee_amount);
-        Self::validate_merchant(&env, &merchant);
+        Self::validate_vendor(&env, &vendor);
         let score = Self::validate_reputation(&env, &user);
         Self::validate_liquidity(&env, total_amount, guarantee_amount);
         Self::enter_non_reentrant(&env);
@@ -67,7 +67,7 @@ impl CreditLineContract {
         let mut loan = Self::build_loan(
             &env,
             user.clone(),
-            merchant.clone(),
+            vendor.clone(),
             total_amount,
             guarantee_amount,
             repayment_schedule.clone(),
@@ -83,12 +83,12 @@ impl CreditLineContract {
         let pool_contribution = total_amount
             .checked_sub(guarantee_amount)
             .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
-        Self::fund_loan_from_pool(&env, &user, &merchant, guarantee_amount, pool_contribution);
+        Self::fund_loan_from_pool(&env, &user, &vendor, guarantee_amount, pool_contribution);
 
         events::emit_loan_created(
             &env,
             &user,
-            &merchant,
+            &vendor,
             loan_id,
             total_amount,
             guarantee_amount,
@@ -102,7 +102,7 @@ impl CreditLineContract {
     pub fn request_loan(
         env: Env,
         user: Address,
-        merchant: Address,
+        vendor: Address,
         total_amount: i128,
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
@@ -114,7 +114,7 @@ impl CreditLineContract {
         let loan = Self::build_loan(
             &env,
             user.clone(),
-            merchant.clone(),
+            vendor.clone(),
             total_amount,
             guarantee_amount,
             repayment_schedule.clone(),
@@ -133,7 +133,7 @@ impl CreditLineContract {
         events::emit_loan_requested(
             &env,
             &user,
-            &merchant,
+            &vendor,
             loan_id,
             total_amount,
             guarantee_amount,
@@ -168,6 +168,13 @@ impl CreditLineContract {
         storage::set_admin(&env, &new_admin);
     }
 
+
+    /// Upgrade the contract WASM — admin only
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
     pub fn get_admin(env: Env) -> Address {
         storage::get_admin(&env)
     }
@@ -178,10 +185,10 @@ impl CreditLineContract {
         storage::set_reputation_contract(&env, &address);
     }
 
-    pub fn set_merchant_registry(env: Env, admin: Address, address: Address) {
+    pub fn set_vendor_registry(env: Env, admin: Address, address: Address) {
         admin.require_auth();
         access::require_admin(&env, &admin);
-        storage::set_merchant_registry(&env, &address);
+        storage::set_vendor_registry(&env, &address);
     }
 
     pub fn set_liquidity_pool(env: Env, admin: Address, address: Address) {
@@ -216,22 +223,22 @@ impl CreditLineContract {
         }
     }
 
-    fn validate_merchant(env: &Env, merchant: &Address) {
-        let merchant_registry = storage::get_merchant_registry(env)
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::InvalidMerchant));
+    fn validate_vendor(env: &Env, vendor: &Address) {
+        let vendor_registry = storage::get_vendor_registry(env)
+            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::InvalidVendor));
 
-        let registry_client = MerchantRegistryContractClient::new(env, &merchant_registry);
+        let registry_client = VendorRegistryContractClient::new(env, &vendor_registry);
         let is_active = env
             .try_invoke_contract::<bool, soroban_sdk::Error>(
                 &registry_client.address,
                 &symbol_short!("is_active"),
-                (merchant,).into_val(env),
+                (vendor,).into_val(env),
             )
-            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::MerchantValidationFailed))
-            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::MerchantValidationFailed));
+            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::VendorValidationFailed))
+            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::VendorValidationFailed));
 
         if !is_active {
-            panic_with_error!(env, CreditLineError::MerchantNotActive);
+            panic_with_error!(env, CreditLineError::VendorNotActive);
         }
     }
 
@@ -276,7 +283,7 @@ impl CreditLineContract {
     fn fund_loan_from_pool(
         env: &Env,
         borrower: &Address,
-        merchant: &Address,
+        vendor: &Address,
         guarantee_amount: i128,
         pool_contribution: i128,
     ) {
@@ -293,7 +300,7 @@ impl CreditLineContract {
             let lp_client = LiquidityPoolContractClient::new(env, &liquidity_pool);
             lp_client.fund_loan(
                 &env.current_contract_address(),
-                merchant,
+                vendor,
                 &pool_contribution,
             );
         }
@@ -302,7 +309,7 @@ impl CreditLineContract {
     fn build_loan(
         env: &Env,
         user: Address,
-        merchant: Address,
+        vendor: Address,
         total_amount: i128,
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
@@ -310,7 +317,7 @@ impl CreditLineContract {
         status: LoanStatus,
     ) -> Loan {
         Self::validate_guarantee(env, total_amount, guarantee_amount);
-        Self::validate_merchant(env, &merchant);
+        Self::validate_vendor(env, &vendor);
 
         let interest_rate_bps = Self::interest_rate_bps(env, score);
         let interest_amount =
@@ -335,7 +342,7 @@ impl CreditLineContract {
         Loan {
             loan_id,
             borrower: user,
-            merchant,
+            vendor,
             total_amount,
             guarantee_amount,
             interest_rate_bps,

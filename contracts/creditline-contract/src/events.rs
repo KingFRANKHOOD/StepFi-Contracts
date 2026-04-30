@@ -15,14 +15,14 @@ const LOAN_GRACE_PERIOD: Symbol = symbol_short!("LOANGRC");
 pub fn emit_loan_created(
     env: &Env,
     user: &Address,
-    merchant: &Address,
+    vendor: &Address,
     loan_id: u64,
     total_amount: i128,
     guarantee_amount: i128,
     repayment_schedule: &Vec<RepaymentInstallment>,
 ) {
     env.events().publish(
-        (LOAN_CREATED, user, merchant),
+        (LOAN_CREATED, user, vendor),
         (
             loan_id,
             total_amount,
@@ -35,14 +35,14 @@ pub fn emit_loan_created(
 pub fn emit_loan_requested(
     env: &Env,
     user: &Address,
-    merchant: &Address,
+    vendor: &Address,
     loan_id: u64,
     total_amount: i128,
     guarantee_amount: i128,
     repayment_schedule: &Vec<RepaymentInstallment>,
 ) {
     env.events().publish(
-        (LOAN_REQUESTED, user, merchant),
+        (LOAN_REQUESTED, user, vendor),
         (
             loan_id,
             total_amount,

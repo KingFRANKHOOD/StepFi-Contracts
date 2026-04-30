@@ -6,8 +6,8 @@ use soroban_sdk::contracterror;
 pub enum Error {
     AlreadyInitialized = 1,
     NotInitialized = 2,
-    MerchantAlreadyRegistered = 3,
-    MerchantNotFound = 4,
+    VendorAlreadyRegistered = 3,
+    VendorNotFound = 4,
     InvalidName = 5,
     Unauthorized = 6,
 }

@@ -26,7 +26,7 @@ pub struct RepaymentInstallment {
 pub struct Loan {
     pub loan_id: u64,
     pub borrower: Address,
-    pub merchant: Address,
+    pub vendor: Address,
     pub total_amount: i128,
     pub guarantee_amount: i128,
     pub interest_rate_bps: u32,

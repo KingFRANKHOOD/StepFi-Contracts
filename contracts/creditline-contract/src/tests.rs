@@ -1,6 +1,6 @@
 use crate::{CreditLineContract, CreditLineContractClient, LoanStatus, RepaymentInstallment};
 use liquidity_pool_contract::{LiquidityPoolContract, LiquidityPoolContractClient, PoolStats};
-use merchant_registry_contract::MerchantRegistryContract;
+use vendor_registry_contract::VendorRegistryContract;
 use parameters_contract::{
     default_parameters, ParametersContract, ParametersContractClient, ProtocolParameters,
 };
@@ -52,7 +52,7 @@ impl MockLiquidityPool {
         }
     }
 
-    pub fn fund_loan(_env: Env, _creditline: Address, _merchant: Address, _amount: i128) {}
+    pub fn fund_loan(_env: Env, _creditline: Address, _vendor: Address, _amount: i128) {}
 
     pub fn receive_repayment(_env: Env, _from: Address, _amount: i128, _fee: i128) {}
 
@@ -87,7 +87,7 @@ struct TestCtx {
     rep_id: Address,
     token_id: Address,
     lp_id: Address,
-    merchant_registry_id: Address,
+    vendor_registry_id: Address,
 }
 
 impl TestCtx {
@@ -104,13 +104,13 @@ impl TestCtx {
         let admin = Address::generate(&env);
         let rep_id = env.register(MockReputation, ());
 
-        // Register the actual MerchantRegistryContract
-        let merchant_registry_id = env.register(MerchantRegistryContract, ());
+        // Register the actual VendorRegistryContract
+        let vendor_registry_id = env.register(VendorRegistryContract, ());
 
-        // Initialize the merchant registry using invoke_contract
+        // Initialize the vendor registry using invoke_contract
         use soroban_sdk::{IntoVal, Symbol};
-        let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-            &merchant_registry_id,
+        let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+            &vendor_registry_id,
             &Symbol::new(&env, "initialize"),
             (&admin,).into_val(&env),
         );
@@ -121,7 +121,7 @@ impl TestCtx {
         let token_id = env
             .register_stellar_asset_contract_v2(token_admin.clone())
             .address();
-        client.initialize(&admin, &rep_id, &merchant_registry_id, &lp_id, &token_id);
+        client.initialize(&admin, &rep_id, &vendor_registry_id, &lp_id, &token_id);
 
         TestCtx {
             env,
@@ -130,7 +130,7 @@ impl TestCtx {
             rep_id,
             token_id,
             lp_id,
-            merchant_registry_id,
+            vendor_registry_id,
         }
     }
 
@@ -145,25 +145,25 @@ impl TestCtx {
         schedule
     }
 
-    /// Register a merchant in the merchant registry (idempotent - won't fail if already registered)
-    fn register_merchant(&self, merchant: &Address, name: &str) {
+    /// Register a vendor in the vendor registry (idempotent - won't fail if already registered)
+    fn register_vendor(&self, vendor: &Address, name: &str) {
         use soroban_sdk::{IntoVal, Symbol};
-        let merchant_name = SorobanString::from_str(&self.env, name);
+        let vendor_name = SorobanString::from_str(&self.env, name);
 
         // Use try_invoke_contract to handle errors gracefully
         // Silently ignore errors - in tests, we want this to be idempotent
         let _ = self.env.try_invoke_contract::<(), soroban_sdk::Error>(
-            &self.merchant_registry_id,
-            &Symbol::new(&self.env, "register_merchant"),
-            (&self.admin, merchant, merchant_name).into_val(&self.env),
+            &self.vendor_registry_id,
+            &Symbol::new(&self.env, "register_vendor"),
+            (&self.admin, vendor, vendor_name).into_val(&self.env),
         );
     }
 
     /// Create a loan with sensible defaults: total=1000, guarantee=200, 1 installment.
-    /// Automatically registers the merchant if not already registered.
-    fn create_default_loan(&self, user: &Address, merchant: &Address) -> u64 {
-        // Register the merchant first (idempotent - won't fail if already registered)
-        self.register_merchant(merchant, "Test Merchant");
+    /// Automatically registers the vendor if not already registered.
+    fn create_default_loan(&self, user: &Address, vendor: &Address) -> u64 {
+        // Register the vendor first (idempotent - won't fail if already registered)
+        self.register_vendor(vendor, "Test Vendor");
 
         // Guarantee transfer now happens at loan creation, so borrower needs balance.
         self.mint(user, DEFAULT_GUARANTEE);
@@ -172,22 +172,22 @@ impl TestCtx {
         let schedule = self.single_installment(DEFAULT_TOTAL_DUE, due_date);
         self.client.create_loan(
             user,
-            merchant,
+            vendor,
             &DEFAULT_PRINCIPAL,
             &DEFAULT_GUARANTEE,
             &schedule,
         )
     }
 
-    fn create_default_request(&self, user: &Address, merchant: &Address) -> u64 {
-        self.register_merchant(merchant, "Test Merchant");
+    fn create_default_request(&self, user: &Address, vendor: &Address) -> u64 {
+        self.register_vendor(vendor, "Test Vendor");
         self.mint(user, DEFAULT_GUARANTEE);
 
         let due_date = self.env.ledger().timestamp() + 10_000;
         let schedule = self.single_installment(DEFAULT_TOTAL_DUE, due_date);
         self.client.request_loan(
             user,
-            merchant,
+            vendor,
             &DEFAULT_PRINCIPAL,
             &DEFAULT_GUARANTEE,
             &schedule,
@@ -221,14 +221,14 @@ fn test_initialize() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -247,14 +247,14 @@ fn test_initialize_twice_fails() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env); // add this
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -263,7 +263,7 @@ fn test_initialize_twice_fails() {
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -286,14 +286,14 @@ fn test_get_loan_not_found() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -313,14 +313,14 @@ fn test_set_admin() {
     let admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -344,14 +344,14 @@ fn test_set_reputation_contract() {
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
     let new_reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -363,7 +363,7 @@ fn test_set_reputation_contract() {
 }
 
 #[test]
-fn test_set_merchant_registry() {
+fn test_set_vendor_registry() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -372,21 +372,21 @@ fn test_set_merchant_registry() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
-    let new_merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
+    let new_vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
 
-    // Update merchant registry address
-    client.set_merchant_registry(&admin, &new_merchant_registry);
+    // Update vendor registry address
+    client.set_vendor_registry(&admin, &new_vendor_registry);
 
     // Verify it was updated (we can't directly query, but no panic means success)
 }
@@ -401,7 +401,7 @@ fn test_set_liquidity_pool() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let new_liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
@@ -409,7 +409,7 @@ fn test_set_liquidity_pool() {
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -433,16 +433,16 @@ fn test_create_loan_with_zero_total_amount() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -450,7 +450,7 @@ fn test_create_loan_with_zero_total_amount() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // This should panic with InvalidAmount (error code 9)
-    client.create_loan(&user, &merchant, &0, &0, &repayment_schedule);
+    client.create_loan(&user, &vendor, &0, &0, &repayment_schedule);
 }
 
 #[test]
@@ -464,16 +464,16 @@ fn test_create_loan_with_negative_total_amount() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -481,7 +481,7 @@ fn test_create_loan_with_negative_total_amount() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // This should panic with InvalidAmount (error code 9)
-    client.create_loan(&user, &merchant, &-1000, &-200, &repayment_schedule);
+    client.create_loan(&user, &vendor, &-1000, &-200, &repayment_schedule);
 }
 
 #[test]
@@ -495,16 +495,16 @@ fn test_create_loan_with_zero_guarantee_amount() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -512,7 +512,7 @@ fn test_create_loan_with_zero_guarantee_amount() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // This should panic with InvalidAmount (error code 9)
-    client.create_loan(&user, &merchant, &1000, &0, &repayment_schedule);
+    client.create_loan(&user, &vendor, &1000, &0, &repayment_schedule);
 }
 
 #[test]
@@ -526,16 +526,16 @@ fn test_create_loan_with_insufficient_guarantee_19_percent() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -543,7 +543,7 @@ fn test_create_loan_with_insufficient_guarantee_19_percent() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // 190 is 19% of 1000, should fail with InsufficientGuarantee (error code 2)
-    client.create_loan(&user, &merchant, &1000, &190, &repayment_schedule);
+    client.create_loan(&user, &vendor, &1000, &190, &repayment_schedule);
 }
 
 #[test]
@@ -557,16 +557,16 @@ fn test_create_loan_with_insufficient_guarantee_10_percent() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -574,7 +574,7 @@ fn test_create_loan_with_insufficient_guarantee_10_percent() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // 100 is 10% of 1000, should fail with InsufficientGuarantee (error code 2)
-    client.create_loan(&user, &merchant, &1000, &100, &repayment_schedule);
+    client.create_loan(&user, &vendor, &1000, &100, &repayment_schedule);
 }
 
 // Additional edge case tests
@@ -616,14 +616,14 @@ fn test_loan_counter_increments() {
 
     let admin = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -644,16 +644,16 @@ fn test_create_loan_with_one_less_than_minimum_guarantee() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -661,7 +661,7 @@ fn test_create_loan_with_one_less_than_minimum_guarantee() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // 199 is 1 less than 20% of 1000, should fail with InsufficientGuarantee (error code 2)
-    client.create_loan(&user, &merchant, &1000, &199, &repayment_schedule);
+    client.create_loan(&user, &vendor, &1000, &199, &repayment_schedule);
 }
 
 #[test]
@@ -676,14 +676,14 @@ fn test_multiple_contract_address_updates() {
     let reputation_contract_1 = Address::generate(&env);
     let reputation_contract_2 = Address::generate(&env);
     let reputation_contract_3 = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract_1,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -706,16 +706,16 @@ fn test_create_loan_with_positive_total_negative_guarantee() {
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let reputation_contract = Address::generate(&env);
-    let merchant_registry = Address::generate(&env);
+    let vendor_registry = Address::generate(&env);
     let liquidity_pool = Address::generate(&env);
     let token = Address::generate(&env);
 
     client.initialize(
         &admin,
         &reputation_contract,
-        &merchant_registry,
+        &vendor_registry,
         &liquidity_pool,
         &token,
     );
@@ -723,7 +723,7 @@ fn test_create_loan_with_positive_total_negative_guarantee() {
     let repayment_schedule = soroban_sdk::Vec::new(&env);
 
     // Positive total but negative guarantee should fail with InvalidAmount (error code 9)
-    client.create_loan(&user, &merchant, &1000, &-200, &repayment_schedule);
+    client.create_loan(&user, &vendor, &1000, &-200, &repayment_schedule);
 }
 
 #[test]
@@ -737,38 +737,38 @@ fn test_mark_defaulted_success() {
     // Register our Mock Reputation contract
     let rep_id = env.register(MockReputation, ());
 
-    // Register the actual MerchantRegistryContract
-    let merchant_registry_id = env.register(MerchantRegistryContract, ());
+    // Register the actual VendorRegistryContract
+    let vendor_registry_id = env.register(VendorRegistryContract, ());
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let liquidity_pool = env.register(MockLiquidityPool, ());
     let token_admin = Address::generate(&env);
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
 
-    // Initialize the merchant registry
+    // Initialize the vendor registry
     use soroban_sdk::{IntoVal, Symbol};
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
         &Symbol::new(&env, "initialize"),
         (&admin,).into_val(&env),
     );
 
-    // Register the merchant
-    let merchant_name = SorobanString::from_str(&env, "Test Merchant");
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
-        &Symbol::new(&env, "register_merchant"),
-        (&admin, &merchant, merchant_name).into_val(&env),
+    // Register the vendor
+    let vendor_name = SorobanString::from_str(&env, "Test Vendor");
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
+        &Symbol::new(&env, "register_vendor"),
+        (&admin, &vendor, vendor_name).into_val(&env),
     );
 
     client.initialize(
         &admin,
         &rep_id, // Pass the Mock ID
-        &merchant_registry_id,
+        &vendor_registry_id,
         &liquidity_pool,
         &token,
     );
@@ -787,7 +787,7 @@ fn test_mark_defaulted_success() {
     asset_client.mint(&user, &200);
 
     // Create loan (calls MockReputation::get_score)
-    let loan_id = client.create_loan(&user, &merchant, &1000, &200, &schedule);
+    let loan_id = client.create_loan(&user, &vendor, &1000, &200, &schedule);
 
     // Time Travel past the due date
     env.ledger().set_timestamp(12000);
@@ -810,38 +810,38 @@ fn test_mark_defaulted_too_early_fails() {
 
     let rep_id = env.register(MockReputation, ());
 
-    // Register the actual MerchantRegistryContract
-    let merchant_registry_id = env.register(MerchantRegistryContract, ());
+    // Register the actual VendorRegistryContract
+    let vendor_registry_id = env.register(VendorRegistryContract, ());
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
     let liquidity_pool = env.register(MockLiquidityPool, ());
 
-    // Initialize the merchant registry
+    // Initialize the vendor registry
     use soroban_sdk::{IntoVal, Symbol};
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
         &Symbol::new(&env, "initialize"),
         (&admin,).into_val(&env),
     );
 
-    // Register the merchant
-    let merchant_name = SorobanString::from_str(&env, "Test Merchant");
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
-        &Symbol::new(&env, "register_merchant"),
-        (&admin, &merchant, merchant_name).into_val(&env),
+    // Register the vendor
+    let vendor_name = SorobanString::from_str(&env, "Test Vendor");
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
+        &Symbol::new(&env, "register_vendor"),
+        (&admin, &vendor, vendor_name).into_val(&env),
     );
 
     client.initialize(
         &admin,
         &rep_id,
-        &merchant_registry_id,
+        &vendor_registry_id,
         &liquidity_pool,
         &token,
     );
@@ -858,7 +858,7 @@ fn test_mark_defaulted_too_early_fails() {
     let asset_client = StellarAssetClient::new(&env, &token);
     asset_client.mint(&user, &200);
 
-    let loan_id = client.create_loan(&user, &merchant, &1000, &200, &schedule);
+    let loan_id = client.create_loan(&user, &vendor, &1000, &200, &schedule);
 
     // This should fail because 10000 < 20000
     client.mark_defaulted(&loan_id);
@@ -870,12 +870,12 @@ fn test_mark_defaulted_too_early_fails() {
 fn test_create_loan_returns_incrementing_ids() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    // create_default_loan registers the merchant on first call
-    let id1 = t.create_default_loan(&user, &merchant);
-    let id2 = t.create_default_loan(&user, &merchant);
-    let id3 = t.create_default_loan(&user, &merchant);
+    // create_default_loan registers the vendor on first call
+    let id1 = t.create_default_loan(&user, &vendor);
+    let id2 = t.create_default_loan(&user, &vendor);
+    let id3 = t.create_default_loan(&user, &vendor);
 
     assert_eq!(id1, 1);
     assert_eq!(id2, 2);
@@ -886,8 +886,8 @@ fn test_create_loan_returns_incrementing_ids() {
 fn test_create_loan_stores_correct_fields() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(5000);
     let due_date = 15000_u64;
@@ -896,12 +896,12 @@ fn test_create_loan_stores_correct_fields() {
 
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
     let loan = t.client.get_loan(&loan_id);
 
     assert_eq!(loan.loan_id, loan_id);
     assert_eq!(loan.borrower, user);
-    assert_eq!(loan.merchant, merchant);
+    assert_eq!(loan.vendor, vendor);
     assert_eq!(loan.total_amount, DEFAULT_PRINCIPAL);
     assert_eq!(loan.guarantee_amount, DEFAULT_GUARANTEE);
     assert_eq!(loan.interest_rate_bps, DEFAULT_INTEREST_BPS);
@@ -921,14 +921,14 @@ fn test_create_loan_exactly_20_percent_guarantee() {
     // 200 is exactly 20% of 1000 — must succeed
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, 99999);
     t.mint(&user, DEFAULT_GUARANTEE);
 
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
     let loan = t.client.get_loan(&loan_id);
     assert_eq!(loan.guarantee_amount, DEFAULT_GUARANTEE);
 }
@@ -938,14 +938,14 @@ fn test_create_loan_with_more_than_20_percent_guarantee() {
     // 500 is 50% of 1000 — must succeed
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, 99999);
     t.mint(&user, 500);
 
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &500, &schedule);
+        .create_loan(&user, &vendor, &1000, &500, &schedule);
     let loan = t.client.get_loan(&loan_id);
     assert_eq!(loan.status, LoanStatus::Active);
 }
@@ -954,8 +954,8 @@ fn test_create_loan_with_more_than_20_percent_guarantee() {
 fn test_create_loan_with_multi_installment_schedule() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     let mut schedule = soroban_sdk::Vec::new(&t.env);
     schedule.push_back(RepaymentInstallment {
@@ -974,7 +974,7 @@ fn test_create_loan_with_multi_installment_schedule() {
 
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
     let loan = t.client.get_loan(&loan_id);
 
     assert_eq!(loan.repayment_schedule.len(), 3);
@@ -995,34 +995,34 @@ fn test_create_loan_rejected_when_reputation_below_threshold() {
     // Wire in the low-score mock
     let low_rep_id = env.register(MockReputationLow, ());
 
-    // Register the actual MerchantRegistryContract
-    let merchant_registry_id = env.register(MerchantRegistryContract, ());
+    // Register the actual VendorRegistryContract
+    let vendor_registry_id = env.register(VendorRegistryContract, ());
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let merchant = Address::generate(&env);
+    let vendor = Address::generate(&env);
     let token = Address::generate(&env);
 
-    // Initialize the merchant registry
+    // Initialize the vendor registry
     use soroban_sdk::{IntoVal, Symbol};
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
         &Symbol::new(&env, "initialize"),
         (&admin,).into_val(&env),
     );
 
-    // Register the merchant
-    let merchant_name = SorobanString::from_str(&env, "Test Merchant");
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = env.invoke_contract(
-        &merchant_registry_id,
-        &Symbol::new(&env, "register_merchant"),
-        (&admin, &merchant, merchant_name).into_val(&env),
+    // Register the vendor
+    let vendor_name = SorobanString::from_str(&env, "Test Vendor");
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = env.invoke_contract(
+        &vendor_registry_id,
+        &Symbol::new(&env, "register_vendor"),
+        (&admin, &vendor, vendor_name).into_val(&env),
     );
 
     client.initialize(
         &admin,
         &low_rep_id,
-        &merchant_registry_id,
+        &vendor_registry_id,
         &Address::generate(&env),
         &token,
     );
@@ -1034,7 +1034,7 @@ fn test_create_loan_rejected_when_reputation_below_threshold() {
     });
 
     // Score is 49 — below 50 minimum → InsufficientReputation (error 4)
-    client.create_loan(&user, &merchant, &1000, &200, &schedule);
+    client.create_loan(&user, &vendor, &1000, &200, &schedule);
 }
 
 #[test]
@@ -1042,8 +1042,8 @@ fn test_create_loan_accepted_at_exactly_threshold_score() {
     // MockReputation returns 100 which is ≥ 50 → must succeed
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
     let loan = t.client.get_loan(&loan_id);
     assert_eq!(loan.status, LoanStatus::Active);
 }
@@ -1054,9 +1054,9 @@ fn test_create_loan_accepted_at_exactly_threshold_score() {
 fn test_create_loan_emits_loan_created_event() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.create_default_loan(&user, &merchant);
+    t.create_default_loan(&user, &vendor);
 
     // At least one event was emitted
     let events = t.env.events().all();
@@ -1070,15 +1070,15 @@ fn test_create_loan_emits_loan_created_event() {
 fn test_mark_defaulted_emits_loan_defaulted_event() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1097,15 +1097,15 @@ fn test_mark_defaulted_emits_loan_defaulted_event() {
 fn test_mark_defaulted_on_already_defaulted_loan_fails() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1125,15 +1125,15 @@ fn test_mark_defaulted_on_nonexistent_loan_fails() {
 fn test_default_flow_loan_status_becomes_defaulted() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     let before = t.client.get_loan(&loan_id);
     assert_eq!(before.status, LoanStatus::Active);
@@ -1149,15 +1149,15 @@ fn test_default_flow_loan_status_becomes_defaulted() {
 fn test_default_flow_preserves_loan_amounts() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1173,8 +1173,8 @@ fn test_mark_defaulted_at_exactly_due_date_boundary() {
     // Ledger timestamp == due_date: still NOT overdue (the condition is `timestamp > due_date`)
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let due_date = 5000_u64;
@@ -1182,7 +1182,7 @@ fn test_mark_defaulted_at_exactly_due_date_boundary() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     // Set timestamp to exactly the due date — mark_defaulted should fail (LoanNotOverdue)
     t.env.ledger().set_timestamp(due_date);
@@ -1195,8 +1195,8 @@ fn test_mark_defaulted_at_exactly_due_date_boundary() {
 fn test_mark_defaulted_one_second_past_due_succeeds() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let due_date = 5000_u64;
@@ -1204,7 +1204,7 @@ fn test_mark_defaulted_one_second_past_due_succeeds() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.env.ledger().set_timestamp(due_date + 1);
     t.client.mark_defaulted(&loan_id);
@@ -1218,8 +1218,8 @@ fn test_default_flow_uses_last_installment_for_overdue_check() {
     // Multi-installment loan: overdue is determined by the LAST installment's due date
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
 
@@ -1240,7 +1240,7 @@ fn test_default_flow_uses_last_installment_for_overdue_check() {
 
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     // Past first two but not the last — should still fail (LoanNotOverdue)
     t.env.ledger().set_timestamp(7000);
@@ -1265,15 +1265,15 @@ fn test_mark_defaulted_triggers_reputation_slash() {
     // proving the contract correctly invokes the reputation contract on default.
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     // This succeeds only if the `slash` cross-contract call is executed without error
@@ -1306,8 +1306,8 @@ fn test_mark_defaulted_blocked_during_grace_period() {
     // the clock is still inside due_date < t <= due_date + grace.
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     setup_parameters_with_grace_period(&t, 1_000);
 
@@ -1317,7 +1317,7 @@ fn test_mark_defaulted_blocked_during_grace_period() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     // One second past due but still within the grace window.
     t.env.ledger().set_timestamp(due_date + 1);
@@ -1335,8 +1335,8 @@ fn test_mark_defaulted_blocked_during_grace_period() {
 fn test_mark_defaulted_succeeds_after_grace_period_expires() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     let grace: u64 = 1_000;
     setup_parameters_with_grace_period(&t, grace);
@@ -1347,7 +1347,7 @@ fn test_mark_defaulted_succeeds_after_grace_period_expires() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     // One second past the end of the grace window.
     t.env.ledger().set_timestamp(due_date + grace + 1);
@@ -1362,8 +1362,8 @@ fn test_mark_defaulted_at_grace_period_boundary_still_blocked() {
     // At exactly due_date + grace_period the loan is still protected.
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     let grace: u64 = 1_000;
     setup_parameters_with_grace_period(&t, grace);
@@ -1374,7 +1374,7 @@ fn test_mark_defaulted_at_grace_period_boundary_still_blocked() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     t.env.ledger().set_timestamp(due_date + grace);
     let result = t.client.try_mark_defaulted(&loan_id);
@@ -1388,8 +1388,8 @@ fn test_mark_defaulted_at_grace_period_boundary_still_blocked() {
 fn test_warn_grace_period_emits_event() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     let grace: u64 = 1_000;
     setup_parameters_with_grace_period(&t, grace);
@@ -1400,7 +1400,7 @@ fn test_warn_grace_period_emits_event() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     // Advance into the grace window and call warn_grace_period.
     t.env.ledger().set_timestamp(due_date + 1);
@@ -1418,8 +1418,8 @@ fn test_warn_grace_period_emits_event() {
 fn test_warn_grace_period_fails_before_due_date() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     setup_parameters_with_grace_period(&t, 1_000);
 
@@ -1429,7 +1429,7 @@ fn test_warn_grace_period_fails_before_due_date() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     // Still before due date — should return LoanNotOverdue.
     let result = t.client.try_warn_grace_period(&loan_id);
@@ -1443,8 +1443,8 @@ fn test_warn_grace_period_fails_before_due_date() {
 fn test_warn_grace_period_fails_after_grace_expires() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     let grace: u64 = 1_000;
     setup_parameters_with_grace_period(&t, grace);
@@ -1455,7 +1455,7 @@ fn test_warn_grace_period_fails_after_grace_expires() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     // Past the grace window — no longer in grace period.
     t.env.ledger().set_timestamp(due_date + grace + 1);
@@ -1471,8 +1471,8 @@ fn test_zero_grace_period_allows_immediate_default() {
     // grace_period_seconds = 0 preserves the original one-second-past-due behavior.
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     setup_parameters_with_grace_period(&t, 0);
 
@@ -1482,7 +1482,7 @@ fn test_zero_grace_period_allows_immediate_default() {
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     t.env.ledger().set_timestamp(due_date + 1);
     t.client.mark_defaulted(&loan_id);
@@ -1504,11 +1504,11 @@ fn test_set_reputation_contract_by_non_admin_fails() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")] // NotAdmin
-fn test_set_merchant_registry_by_non_admin_fails() {
+fn test_set_vendor_registry_by_non_admin_fails() {
     let t = TestCtx::setup();
     let intruder = Address::generate(&t.env);
     let new_registry = Address::generate(&t.env);
-    t.client.set_merchant_registry(&intruder, &new_registry);
+    t.client.set_vendor_registry(&intruder, &new_registry);
 }
 
 #[test]
@@ -1529,7 +1529,7 @@ fn test_admin_can_update_all_contract_addresses() {
 
     // All three must succeed without panic
     t.client.set_reputation_contract(&t.admin, &new_rep);
-    t.client.set_merchant_registry(&t.admin, &new_registry);
+    t.client.set_vendor_registry(&t.admin, &new_registry);
     t.client.set_liquidity_pool(&t.admin, &new_pool);
 }
 
@@ -1539,8 +1539,8 @@ fn test_admin_can_update_all_contract_addresses() {
 fn test_partial_repayment_reduces_remaining_balance() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1554,8 +1554,8 @@ fn test_partial_repayment_reduces_remaining_balance() {
 fn test_full_repayment_sets_status_to_paid() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1570,8 +1570,8 @@ fn test_full_repayment_sets_status_to_paid() {
 fn test_overpayment_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     // Paying more than remaining_balance should panic with InvalidAmount
     t.client
@@ -1585,8 +1585,8 @@ fn test_unauthorized_repayment_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
     let intruder = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     // A different address trying to repay the loan must fail with NotBorrower
     t.client.repay_loan(&intruder, &loan_id, &200);
@@ -1598,15 +1598,15 @@ fn test_unauthorized_repayment_is_rejected() {
 fn test_repayment_on_non_active_loan_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1620,8 +1620,8 @@ fn test_repayment_on_non_active_loan_is_rejected() {
 fn test_full_repayment_triggers_reputation_increase() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
     t.client.repay_loan(&user, &loan_id, &DEFAULT_TOTAL_DUE);
@@ -1635,15 +1635,15 @@ fn test_early_repayment_triggers_bonus_reputation_increase() {
     // Repaying before the first installment due date is considered "early"
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 10000);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     // Pay early (timestamp 2000, well before due date 10000)
     t.env.ledger().set_timestamp(2000);
@@ -1654,64 +1654,64 @@ fn test_early_repayment_triggers_bonus_reputation_increase() {
     assert_eq!(loan.status, LoanStatus::Paid);
 }
 
-// ─── merchant validation ─────────────────────────────────────────────────────
+// ─── vendor validation ─────────────────────────────────────────────────────
 
 #[test]
-fn test_active_merchant_can_receive_loan() {
-    // An approved and active merchant must pass validation
+fn test_active_vendor_can_receive_loan() {
+    // An approved and active vendor must pass validation
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let active_merchant = Address::generate(&t.env);
+    let active_vendor = Address::generate(&t.env);
 
-    // create_default_loan already registers the merchant
-    let loan_id = t.create_default_loan(&user, &active_merchant);
+    // create_default_loan already registers the vendor
+    let loan_id = t.create_default_loan(&user, &active_vendor);
     assert!(loan_id > 0);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #3)")] // InvalidMerchant
-fn test_inactive_merchant_loan_is_rejected() {
-    // A merchant that is registered but set to inactive must fail
+#[should_panic(expected = "Error(Contract, #3)")] // InvalidVendor
+fn test_inactive_vendor_loan_is_rejected() {
+    // A vendor that is registered but set to inactive must fail
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let inactive_merchant = Address::generate(&t.env);
+    let inactive_vendor = Address::generate(&t.env);
 
-    // Register the merchant first using invoke_contract
+    // Register the vendor first using invoke_contract
     use soroban_sdk::{IntoVal, Symbol};
-    let merchant_name = SorobanString::from_str(&t.env, "Inactive Merchant");
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = t.env.invoke_contract(
-        &t.merchant_registry_id,
-        &Symbol::new(&t.env, "register_merchant"),
-        (&t.admin, &inactive_merchant, merchant_name).into_val(&t.env),
+    let vendor_name = SorobanString::from_str(&t.env, "Inactive Vendor");
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = t.env.invoke_contract(
+        &t.vendor_registry_id,
+        &Symbol::new(&t.env, "register_vendor"),
+        (&t.admin, &inactive_vendor, vendor_name).into_val(&t.env),
     );
 
-    // Then deactivate the merchant
-    let _: Result<(), merchant_registry_contract::MerchantRegistryError> = t.env.invoke_contract(
-        &t.merchant_registry_id,
-        &Symbol::new(&t.env, "deactivate_merchant"),
-        (&t.admin, &inactive_merchant).into_val(&t.env),
+    // Then deactivate the vendor
+    let _: Result<(), vendor_registry_contract::VendorRegistryError> = t.env.invoke_contract(
+        &t.vendor_registry_id,
+        &Symbol::new(&t.env, "deactivate_vendor"),
+        (&t.admin, &inactive_vendor).into_val(&t.env),
     );
 
-    // This should panic with InvalidMerchant error
-    let _ = t.create_default_loan(&user, &inactive_merchant);
+    // This should panic with InvalidVendor error
+    let _ = t.create_default_loan(&user, &inactive_vendor);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #3)")] // InvalidMerchant
-fn test_unregistered_merchant_loan_is_rejected() {
-    // A merchant address unknown to the registry must fail
+#[should_panic(expected = "Error(Contract, #3)")] // InvalidVendor
+fn test_unregistered_vendor_loan_is_rejected() {
+    // A vendor address unknown to the registry must fail
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let unknown_merchant = Address::generate(&t.env);
+    let unknown_vendor = Address::generate(&t.env);
 
-    // Don't register the merchant - call create_loan directly instead of create_default_loan
+    // Don't register the vendor - call create_loan directly instead of create_default_loan
     let due_date = t.env.ledger().timestamp() + 10_000;
     let schedule = t.single_installment(1000, due_date);
 
-    // This should panic with InvalidMerchant error
+    // This should panic with InvalidVendor error
     let _ = t
         .client
-        .create_loan(&user, &unknown_merchant, &1000, &200, &schedule);
+        .create_loan(&user, &unknown_vendor, &1000, &200, &schedule);
 }
 
 // ─── liquidity pool integration — TDD stubs (Phase 6) ────────────────────────
@@ -1722,9 +1722,9 @@ fn test_loan_funding_debits_liquidity_pool() {
     // create_loan must call fund_loan on the liquidity pool contract
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
     // TODO: wire up a MockLiquidityPool; after create_loan verify fund_loan was called
-    let _ = t.create_default_loan(&user, &merchant);
+    let _ = t.create_default_loan(&user, &vendor);
 }
 
 #[test]
@@ -1733,8 +1733,8 @@ fn test_repayment_credited_to_liquidity_pool() {
     // repay() must forward funds to the liquidity pool via receive_repayment
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
     t.mint(&user, DEFAULT_TOTAL_DUE);
     t.client.repay_loan(&user, &loan_id, &DEFAULT_TOTAL_DUE);
     // Verify MockLiquidityPool::receive_repayment was called
@@ -1747,13 +1747,13 @@ fn test_guarantee_transferred_to_pool_on_default() {
     // mark_defaulted must call receive_guarantee on the liquidity pool
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1768,9 +1768,9 @@ fn test_insufficient_liquidity_rejects_loan_creation() {
     // When pool does not have enough available liquidity, create_loan must fail
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
     // TODO: wire up a MockLiquidityPool that returns available=0
-    let _ = t.create_default_loan(&user, &merchant);
+    let _ = t.create_default_loan(&user, &vendor);
 }
 
 // ─── complete loan lifecycle ──────────────────────────────────────────────────
@@ -1780,15 +1780,15 @@ fn test_complete_lifecycle_create_then_default() {
     // Verifies the full path: Active → overdue → Defaulted
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     let created = t.client.get_loan(&loan_id);
     assert_eq!(created.status, LoanStatus::Active);
@@ -1810,8 +1810,8 @@ fn test_multiple_independent_loans_do_not_interfere() {
     let t = TestCtx::setup();
     let user_a = Address::generate(&t.env);
     let user_b = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
 
@@ -1822,10 +1822,10 @@ fn test_multiple_independent_loans_do_not_interfere() {
 
     let loan_a = t
         .client
-        .create_loan(&user_a, &merchant, &1000, &200, &schedule_a);
+        .create_loan(&user_a, &vendor, &1000, &200, &schedule_a);
     let loan_b = t
         .client
-        .create_loan(&user_b, &merchant, &2000, &400, &schedule_b);
+        .create_loan(&user_b, &vendor, &2000, &400, &schedule_b);
 
     // Default loan_a only
     t.advance_past(5000);
@@ -1844,9 +1844,9 @@ fn test_complete_lifecycle_create_repay_complete() {
     // Verifies the full happy path: Active → repaid in full → Paid
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1865,10 +1865,10 @@ fn test_multi_contract_integration_full_flow() {
     // End-to-end: reputation check on create → funding → repayment → score boost
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     // 1. Create loan — reputation validated, pool funded
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1890,15 +1890,15 @@ fn test_multi_contract_integration_full_flow() {
 fn test_repayment_on_defaulted_loan_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    t.register_merchant(&merchant, "Test Merchant");
+    let vendor = Address::generate(&t.env);
+    t.register_vendor(&vendor, "Test Vendor");
 
     t.env.ledger().set_timestamp(1000);
     let schedule = t.single_installment(1000, 5000);
     t.mint(&user, 200);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &1000, &200, &schedule);
+        .create_loan(&user, &vendor, &1000, &200, &schedule);
 
     t.advance_past(5000);
     t.client.mark_defaulted(&loan_id);
@@ -1912,8 +1912,8 @@ fn test_repayment_on_defaulted_loan_is_rejected() {
 fn test_repayment_on_already_paid_loan_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE + 2);
 
@@ -1929,8 +1929,8 @@ fn test_repayment_on_already_paid_loan_is_rejected() {
 fn test_zero_repayment_amount_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.client.repay_loan(&user, &loan_id, &0);
 }
@@ -1940,8 +1940,8 @@ fn test_zero_repayment_amount_is_rejected() {
 fn test_negative_repayment_amount_is_rejected() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.client.repay_loan(&user, &loan_id, &-100);
 }
@@ -1950,8 +1950,8 @@ fn test_negative_repayment_amount_is_rejected() {
 fn test_multiple_partial_repayments_accumulate_correctly() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1970,8 +1970,8 @@ fn test_multiple_partial_repayments_accumulate_correctly() {
 fn test_repay_loan_emits_event() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -1989,8 +1989,8 @@ fn test_partial_repayment_does_not_trigger_reputation_increase() {
     // Partial payment must leave status Active — no reputation call expected
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
 
@@ -2013,8 +2013,8 @@ fn test_repayment_on_nonexistent_loan_fails() {
 fn test_active_debt_tracks_create_repay_and_default() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     assert_eq!(t.client.get_user_active_debt(&user), DEFAULT_TOTAL_DUE);
 
@@ -2035,22 +2035,22 @@ fn test_active_debt_tracks_create_repay_and_default() {
 fn test_exposure_limit_blocks_overleveraged_borrower() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     for _ in 0..9 {
-        let _ = t.create_default_loan(&user, &merchant);
+        let _ = t.create_default_loan(&user, &vendor);
     }
 
-    let _ = t.create_default_loan(&user, &merchant);
+    let _ = t.create_default_loan(&user, &vendor);
 }
 
 #[test]
 fn test_request_loan_creates_pending_request_without_active_debt() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    let loan_id = t.create_default_request(&user, &merchant);
+    let loan_id = t.create_default_request(&user, &vendor);
     let loan = t.client.get_loan(&loan_id);
 
     assert_eq!(loan.status, LoanStatus::Pending);
@@ -2062,16 +2062,16 @@ fn test_request_loan_creates_pending_request_without_active_debt() {
 fn test_cancel_pending_loan_refunds_guarantee() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
     let starting_balance = DEFAULT_GUARANTEE;
 
     t.mint(&user, starting_balance);
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = t.env.ledger().timestamp() + 10_000;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     let loan_id = t.client.request_loan(
         &user,
-        &merchant,
+        &vendor,
         &DEFAULT_PRINCIPAL,
         &DEFAULT_GUARANTEE,
         &schedule,
@@ -2091,8 +2091,8 @@ fn test_cancel_pending_loan_refunds_guarantee() {
 fn test_cannot_cancel_active_loan() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.client.cancel_loan(&user, &loan_id);
 }
@@ -2101,14 +2101,14 @@ struct RealIntegrationCtx {
     env: Env,
     creditline: CreditLineContractClient<'static>,
     reputation: ReputationContractClient<'static>,
-    merchant_registry: merchant_registry_contract::MerchantRegistryContractClient<'static>,
+    vendor_registry: vendor_registry_contract::VendorRegistryContractClient<'static>,
     pool: LiquidityPoolContractClient<'static>,
     parameters: ParametersContractClient<'static>,
     token: TokenClient<'static>,
     token_admin: StellarAssetClient<'static>,
     admin: Address,
     treasury: Address,
-    merchant_fund: Address,
+    vendor_fund: Address,
     creditline_id: Address,
 }
 
@@ -2119,7 +2119,7 @@ impl RealIntegrationCtx {
 
         let admin = Address::generate(&env);
         let treasury = Address::generate(&env);
-        let merchant_fund = Address::generate(&env);
+        let vendor_fund = Address::generate(&env);
 
         let token_admin_addr = Address::generate(&env);
         let token_contract = env.register_stellar_asset_contract_v2(token_admin_addr);
@@ -2130,10 +2130,10 @@ impl RealIntegrationCtx {
         let reputation_id = env.register(ReputationContract, ());
         let reputation = ReputationContractClient::new(&env, &reputation_id);
 
-        let merchant_registry_id = env.register(MerchantRegistryContract, ());
-        let merchant_registry = merchant_registry_contract::MerchantRegistryContractClient::new(
+        let vendor_registry_id = env.register(VendorRegistryContract, ());
+        let vendor_registry = vendor_registry_contract::VendorRegistryContractClient::new(
             &env,
-            &merchant_registry_id,
+            &vendor_registry_id,
         );
 
         let pool_id = env.register(LiquidityPoolContract, ());
@@ -2149,8 +2149,8 @@ impl RealIntegrationCtx {
         let token_admin: StellarAssetClient<'static> = unsafe { core::mem::transmute(token_admin) };
         let reputation: ReputationContractClient<'static> =
             unsafe { core::mem::transmute(reputation) };
-        let merchant_registry: merchant_registry_contract::MerchantRegistryContractClient<'static> =
-            unsafe { core::mem::transmute(merchant_registry) };
+        let vendor_registry: vendor_registry_contract::VendorRegistryContractClient<'static> =
+            unsafe { core::mem::transmute(vendor_registry) };
         let pool: LiquidityPoolContractClient<'static> = unsafe { core::mem::transmute(pool) };
         let parameters: ParametersContractClient<'static> =
             unsafe { core::mem::transmute(parameters) };
@@ -2161,15 +2161,15 @@ impl RealIntegrationCtx {
         reputation.set_updater(&admin, &admin, &true);
         reputation.set_updater(&admin, &creditline_id, &true);
 
-        merchant_registry.initialize(&admin);
-        pool.initialize(&admin, &token_address, &treasury, &merchant_fund);
+        vendor_registry.initialize(&admin);
+        pool.initialize(&admin, &token_address, &treasury, &vendor_fund);
         pool.set_creditline(&admin, &creditline_id);
         parameters.initialize_defaults(&admin);
 
         creditline.initialize(
             &admin,
             &reputation_id,
-            &merchant_registry_id,
+            &vendor_registry_id,
             &pool_id,
             &token_address,
         );
@@ -2179,14 +2179,14 @@ impl RealIntegrationCtx {
             env,
             creditline,
             reputation,
-            merchant_registry,
+            vendor_registry,
             pool,
             parameters,
             token,
             token_admin,
             admin,
             treasury,
-            merchant_fund,
+            vendor_fund,
             creditline_id,
         }
     }
@@ -2208,10 +2208,10 @@ impl RealIntegrationCtx {
         self.reputation.set_score(&self.admin, user, &score);
     }
 
-    fn register_merchant(&self, merchant: &Address, name: &str) {
-        let merchant_name = SorobanString::from_str(&self.env, name);
-        self.merchant_registry
-            .register_merchant(&self.admin, merchant, &merchant_name);
+    fn register_vendor(&self, vendor: &Address, name: &str) {
+        let vendor_name = SorobanString::from_str(&self.env, name);
+        self.vendor_registry
+            .register_vendor(&self.admin, vendor, &vendor_name);
     }
 
     fn single_installment(
@@ -2230,15 +2230,15 @@ fn test_real_asset_transfers_on_create_and_repay() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "Integrated Merchant");
+    t.register_vendor(&vendor, "Integrated Vendor");
     t.set_score(&user, 80);
     t.mint(&user, 1_300);
 
     let pool_balance_before = t.balance(&t.pool.address);
-    let merchant_balance_before = t.balance(&merchant);
+    let vendor_balance_before = t.balance(&vendor);
     let creditline_balance_before = t.balance(&t.creditline_id);
     let user_balance_before = t.balance(&user);
 
@@ -2246,10 +2246,10 @@ fn test_real_asset_transfers_on_create_and_repay() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     assert_eq!(t.balance(&user), user_balance_before - 200);
-    assert_eq!(t.balance(&merchant), merchant_balance_before + 800);
+    assert_eq!(t.balance(&vendor), vendor_balance_before + 800);
     assert_eq!(t.balance(&t.creditline_id), creditline_balance_before + 200);
     assert_eq!(t.balance(&t.pool.address), pool_balance_before - 800);
 
@@ -2279,10 +2279,10 @@ fn test_parameters_contract_controls_guarantee_thresholds() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "Governed Merchant");
+    t.register_vendor(&vendor, "Governed Vendor");
     t.set_score(&user, 90);
     t.mint(&user, 300);
 
@@ -2295,7 +2295,7 @@ fn test_parameters_contract_controls_guarantee_thresholds() {
     let due_date = t.env.ledger().timestamp() + 10_000;
     let schedule = t.single_installment(1_000, due_date);
     t.creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 }
 
 #[test]
@@ -2303,10 +2303,10 @@ fn test_end_to_end_happy_path_across_all_contracts() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 20_000);
-    t.register_merchant(&merchant, "Protocol Merchant");
+    t.register_vendor(&vendor, "Protocol Vendor");
     t.set_score(&user, 80);
     t.mint(&user, 1_300);
 
@@ -2315,7 +2315,7 @@ fn test_end_to_end_happy_path_across_all_contracts() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let loan_before_repay = t.creditline.get_loan(&loan_id);
     let total_due = loan_before_repay.remaining_balance;
@@ -2323,7 +2323,7 @@ fn test_end_to_end_happy_path_across_all_contracts() {
         loan_before_repay.interest_outstanding + loan_before_repay.service_fee_outstanding;
     let protocol_fee_from_repayment = total_interest * 1_000 / 10_000;
     let lp_interest = total_interest * 8_500 / 10_000;
-    let merchant_fee_from_repayment = total_interest - lp_interest - protocol_fee_from_repayment;
+    let vendor_fee_from_repayment = total_interest - lp_interest - protocol_fee_from_repayment;
     t.creditline.repay_loan(&user, &loan_id, &total_due);
 
     let loan = t.creditline.get_loan(&loan_id);
@@ -2336,7 +2336,7 @@ fn test_end_to_end_happy_path_across_all_contracts() {
     let stats_after_interest = t.pool.get_pool_stats();
     assert!(stats_after_interest.share_price > share_price_before);
     assert_eq!(t.balance(&t.treasury), protocol_fee_from_repayment + 10);
-    assert_eq!(t.balance(&t.merchant_fund), merchant_fee_from_repayment + 5);
+    assert_eq!(t.balance(&t.vendor_fund), vendor_fee_from_repayment + 5);
 }
 
 #[test]
@@ -2344,10 +2344,10 @@ fn test_end_to_end_default_path_guarantee_and_penalty() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 20_000);
-    t.register_merchant(&merchant, "Risk Merchant");
+    t.register_vendor(&vendor, "Risk Vendor");
     t.set_score(&user, 80);
     t.mint(&user, 200);
 
@@ -2355,7 +2355,7 @@ fn test_end_to_end_default_path_guarantee_and_penalty() {
     let schedule = t.single_installment(1_000, 5_000);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let creditline_balance_after_loan = t.balance(&t.creditline_id);
     let pool_balance_after_loan = t.balance(&t.pool.address);
@@ -2387,16 +2387,16 @@ fn test_no_late_fee_before_due_date() {
     // A loan repaid before its due date must have zero late fees
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     t.env.ledger().set_timestamp(1_000);
     let due_date = 50_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     let loan = t.client.get_loan(&loan_id);
     assert_eq!(loan.late_fees_outstanding, 0);
@@ -2408,16 +2408,16 @@ fn test_apply_late_fees_adds_fee_after_one_day_overdue() {
     // apply_late_fees after exactly 1 full day overdue must add 5 to remaining_balance
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     // Advance 1 full day past due_date
     t.env.ledger().set_timestamp(due_date + SECONDS_PER_DAY);
@@ -2434,16 +2434,16 @@ fn test_apply_late_fees_accumulates_over_multiple_days() {
     // 3 days overdue → fee = 1050 * 50 * 3 / 10_000 = 15
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     t.env.ledger().set_timestamp(due_date + 3 * SECONDS_PER_DAY);
     t.client.apply_late_fees(&loan_id);
@@ -2458,16 +2458,16 @@ fn test_apply_late_fees_is_noop_within_same_day() {
     // Calling apply_late_fees twice within the same day must not double-count
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     t.env.ledger().set_timestamp(due_date + SECONDS_PER_DAY);
     t.client.apply_late_fees(&loan_id);
@@ -2484,9 +2484,9 @@ fn test_apply_late_fees_incremental_across_two_calls() {
     // Day 1 call then day 2 call should each contribute one day's fee
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 0_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
@@ -2496,7 +2496,7 @@ fn test_apply_late_fees_incremental_across_two_calls() {
     t.env.ledger().set_timestamp(1);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     // First accrual: 1 day after due_date (due_date = 0, now = SECONDS_PER_DAY)
     t.env.ledger().set_timestamp(SECONDS_PER_DAY);
@@ -2519,8 +2519,8 @@ fn test_apply_late_fees_incremental_across_two_calls() {
 fn test_apply_late_fees_on_paid_loan_fails() {
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
-    let loan_id = t.create_default_loan(&user, &merchant);
+    let vendor = Address::generate(&t.env);
+    let loan_id = t.create_default_loan(&user, &vendor);
 
     t.mint(&user, DEFAULT_TOTAL_DUE);
     t.client.repay_loan(&user, &loan_id, &DEFAULT_TOTAL_DUE);
@@ -2535,16 +2535,16 @@ fn test_repay_loan_auto_accrues_late_fees() {
     // repay_loan must accrue outstanding late fees before processing payment
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     // Advance 1 day past due_date and attempt partial payment
     t.env.ledger().set_timestamp(due_date + SECONDS_PER_DAY);
@@ -2565,16 +2565,16 @@ fn test_full_repayment_including_late_fees_sets_paid() {
     // Borrower paying remaining_balance after late-fee accrual closes the loan
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     t.env.ledger().set_timestamp(due_date + SECONDS_PER_DAY);
     t.client.apply_late_fees(&loan_id);
@@ -2596,16 +2596,16 @@ fn test_active_debt_includes_late_fees() {
     // apply_late_fees must increase the borrower's active debt by the fee amount
     let t = TestCtx::setup();
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
-    t.register_merchant(&merchant, "Test Merchant");
+    t.register_vendor(&vendor, "Test Vendor");
     let due_date = 1_000_u64;
     let schedule = t.single_installment(DEFAULT_TOTAL_DUE, due_date);
     t.env.ledger().set_timestamp(0);
     t.mint(&user, DEFAULT_GUARANTEE);
     let loan_id = t
         .client
-        .create_loan(&user, &merchant, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
+        .create_loan(&user, &vendor, &DEFAULT_PRINCIPAL, &DEFAULT_GUARANTEE, &schedule);
 
     let debt_before = t.client.get_user_active_debt(&user);
 
@@ -2624,10 +2624,10 @@ fn test_on_time_full_repayment_increases_score_by_10() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "On-Time Merchant");
+    t.register_vendor(&vendor, "On-Time Vendor");
     t.set_score(&user, 60);
     t.mint(&user, 1_300);
 
@@ -2635,7 +2635,7 @@ fn test_on_time_full_repayment_increases_score_by_10() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let loan = t.creditline.get_loan(&loan_id);
     let total_due = loan.remaining_balance;
@@ -2654,10 +2654,10 @@ fn test_early_full_repayment_increases_score_by_15() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "Early Merchant");
+    t.register_vendor(&vendor, "Early Vendor");
     t.set_score(&user, 60);
     t.mint(&user, 1_300);
 
@@ -2666,7 +2666,7 @@ fn test_early_full_repayment_increases_score_by_15() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let loan = t.creditline.get_loan(&loan_id);
     let total_due = loan.remaining_balance;
@@ -2685,10 +2685,10 @@ fn test_partial_repayment_does_not_change_reputation_score() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "Partial Merchant");
+    t.register_vendor(&vendor, "Partial Vendor");
     t.set_score(&user, 70);
     t.mint(&user, 1_300);
 
@@ -2696,7 +2696,7 @@ fn test_partial_repayment_does_not_change_reputation_score() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let loan = t.creditline.get_loan(&loan_id);
     t.mint(&user, loan.remaining_balance);
@@ -2713,10 +2713,10 @@ fn test_reputation_call_failure_does_not_block_repayment() {
     let t = RealIntegrationCtx::setup();
     let provider = Address::generate(&t.env);
     let user = Address::generate(&t.env);
-    let merchant = Address::generate(&t.env);
+    let vendor = Address::generate(&t.env);
 
     t.fund_pool(&provider, 10_000);
-    t.register_merchant(&merchant, "Fail Merchant");
+    t.register_vendor(&vendor, "Fail Vendor");
     t.set_score(&user, 60);
     t.mint(&user, 1_300);
 
@@ -2724,7 +2724,7 @@ fn test_reputation_call_failure_does_not_block_repayment() {
     let schedule = t.single_installment(1_000, due_date);
     let loan_id = t
         .creditline
-        .create_loan(&user, &merchant, &1_000, &200, &schedule);
+        .create_loan(&user, &vendor, &1_000, &200, &schedule);
 
     let loan = t.creditline.get_loan(&loan_id);
     let total_due = loan.remaining_balance;

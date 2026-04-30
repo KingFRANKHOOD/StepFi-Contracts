@@ -3,14 +3,10 @@ members = [
     "contracts/reputation-contract",
     "contracts/creditline-contract",
     "contracts/parameters-contract",
-    "contracts/merchant-registry-contract",
+    "contracts/vendor-registry-contract",
     "contracts/liquidity-pool-contract",
-    "contracts/lp-contract"
 ]
 resolver = "2"
-
-# Future contracts:
-# - contracts/adapter-trustless-contract
 
 [profile.release]
 opt-level = "z"

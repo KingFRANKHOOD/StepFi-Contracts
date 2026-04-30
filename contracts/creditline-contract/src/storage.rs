@@ -63,6 +63,7 @@ pub fn write_loan(env: &Env, loan: &Loan) {
     let key = DataKey::Loan(shard, loan.loan_id);
     let is_new = !env.storage().persistent().has(&key);
     env.storage().persistent().set(&key, loan);
+    extend_persistent_ttl_loan(env, &key);
 
     if is_new {
         append_user_loan_index(env, &loan.borrower, loan.loan_id);
@@ -171,13 +172,13 @@ pub fn set_reputation_contract(env: &Env, address: &Address) {
     env.storage().instance().set(&REPUTATION_CONTRACT, address);
 }
 
-/// Get the Merchant Registry Contract address
-pub fn get_merchant_registry(env: &Env) -> Option<Address> {
+/// Get the Vendor Registry Contract address
+pub fn get_vendor_registry(env: &Env) -> Option<Address> {
     env.storage().instance().get(&MERCHANT_REGISTRY)
 }
 
-/// Set the Merchant Registry Contract address
-pub fn set_merchant_registry(env: &Env, address: &Address) {
+/// Set the Vendor Registry Contract address
+pub fn set_vendor_registry(env: &Env, address: &Address) {
     env.storage().instance().set(&MERCHANT_REGISTRY, address);
 }
 
@@ -220,4 +221,16 @@ pub fn is_reentrancy_locked(env: &Env) -> bool {
 
 pub fn set_reentrancy_locked(env: &Env, locked: bool) {
     env.storage().instance().set(&REENTRANCY_LOCK, &locked);
+}
+
+// TTL constants (in ledgers — 1 ledger ≈ 5 seconds on mainnet)
+// 120 days in ledgers
+pub const PERSISTENT_TTL_THRESHOLD: u32 = 1_036_800;
+pub const PERSISTENT_TTL_EXTEND_TO: u32 = 2_073_600;
+
+/// Extend TTL for a persistent storage entry
+pub fn extend_persistent_ttl_loan(env: &Env, key: &DataKey) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 }
