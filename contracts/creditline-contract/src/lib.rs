@@ -15,7 +15,7 @@ mod storage;
 mod types;
 
 pub use errors::CreditLineError;
-pub use types::{default_protocol_parameters, Loan, LoanStatus, RepaymentInstallment};
+pub use types::{default_protocol_parameters, Loan, LoanStatus, LoanType, RepaymentInstallment};
 
 #[contract]
 pub struct CreditLineContract;
@@ -55,6 +55,7 @@ impl CreditLineContract {
         total_amount: i128,
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
+        loan_type: LoanType,
     ) -> u64 {
         user.require_auth();
 
@@ -73,6 +74,7 @@ impl CreditLineContract {
             repayment_schedule.clone(),
             score,
             LoanStatus::Active,
+            loan_type,
         );
         loan.funded_at = env.ledger().timestamp();
 
@@ -106,6 +108,7 @@ impl CreditLineContract {
         total_amount: i128,
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
+        loan_type: LoanType,
     ) -> u64 {
         user.require_auth();
 
@@ -120,6 +123,7 @@ impl CreditLineContract {
             repayment_schedule.clone(),
             score,
             LoanStatus::Pending,
+            loan_type,
         );
 
         let token_address = storage::get_token(&env)
@@ -315,6 +319,7 @@ impl CreditLineContract {
         repayment_schedule: Vec<RepaymentInstallment>,
         score: u32,
         status: LoanStatus,
+        loan_type: LoanType,
     ) -> Loan {
         Self::validate_guarantee(env, total_amount, guarantee_amount);
         Self::validate_vendor(env, &vendor);
@@ -354,6 +359,7 @@ impl CreditLineContract {
             remaining_balance,
             repayment_schedule,
             status,
+            loan_type,
             created_at: env.ledger().timestamp(),
             funded_at: 0,
             late_fees_outstanding: 0,
@@ -679,6 +685,72 @@ impl CreditLineContract {
                 );
             }
         }
+
+        Self::exit_non_reentrant(&env);
+        new_balance
+    }
+
+    /// Mark a single installment paid and reduce the loan's outstanding balance by `amount`.
+    ///
+    /// Borrower-only. Validates the installment index, ensures the slot is unpaid, debits the
+    /// remaining balance, sets `paid`/`paid_at`, persists the loan, and emits `INSTPAID`.
+    pub fn repay_installment(
+        env: Env,
+        borrower: Address,
+        loan_id: u64,
+        installment_index: u32,
+        amount: i128,
+    ) -> i128 {
+        borrower.require_auth();
+
+        let mut loan = storage::read_loan(&env, loan_id)
+            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::LoanNotFound));
+
+        if loan.borrower != borrower {
+            panic_with_error!(&env, CreditLineError::UnauthorizedRepayer);
+        }
+
+        if loan.status != LoanStatus::Active {
+            panic_with_error!(&env, CreditLineError::LoanNotActive);
+        }
+
+        if installment_index >= loan.repayment_schedule.len() {
+            panic_with_error!(&env, CreditLineError::InvalidInstallmentIndex);
+        }
+
+        let mut installment = loan
+            .repayment_schedule
+            .get(installment_index)
+            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::InvalidInstallmentIndex));
+
+        if installment.paid {
+            panic_with_error!(&env, CreditLineError::InstallmentAlreadyPaid);
+        }
+
+        if amount <= 0 || amount > loan.remaining_balance {
+            panic_with_error!(&env, CreditLineError::InvalidRepaymentAmount);
+        }
+
+        Self::enter_non_reentrant(&env);
+
+        let new_balance = loan
+            .remaining_balance
+            .checked_sub(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        loan.remaining_balance = new_balance;
+
+        installment.paid = true;
+        installment.paid_at = env.ledger().timestamp();
+        loan.repayment_schedule.set(installment_index, installment);
+
+        if new_balance == 0 {
+            loan.status = LoanStatus::Paid;
+        }
+
+        storage::decrease_user_active_debt(&env, &borrower, amount);
+        storage::write_loan(&env, &loan);
+
+        events::emit_installment_paid(&env, loan_id, installment_index, amount, new_balance);
 
         Self::exit_non_reentrant(&env);
         new_balance

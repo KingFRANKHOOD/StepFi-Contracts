@@ -1,6 +1,6 @@
 # StepFi — Project Proposal
 
-## 🚀 Step into your future, pay small small.
+## 🚀 Step into your future. Credit without banks. Progress without limits.
 
 StepFi is an open-source decentralized BNPL (Buy Now Pay Later) protocol built on the Stellar network, designed specifically for learners, interns, and early-career developers in emerging markets.
 

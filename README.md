@@ -9,7 +9,7 @@
 
 # StepFi Contracts
 
-**Step into your future, pay small small.**
+**Step into your future. Credit without banks. Progress without limits.**
 
 Soroban smart contracts powering the StepFi learner BNPL protocol on Stellar
 

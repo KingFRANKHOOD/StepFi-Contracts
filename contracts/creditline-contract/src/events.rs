@@ -10,6 +10,7 @@ const LOAN_REPAID: Symbol = symbol_short!("LOANRPD");
 const LOAN_CANCELLED: Symbol = symbol_short!("LOANCNCL");
 const LOAN_LATE_FEE: Symbol = symbol_short!("LOANLTFE");
 const LOAN_GRACE_PERIOD: Symbol = symbol_short!("LOANGRC");
+const INSTALLMENT_PAID: Symbol = symbol_short!("INSTPAID");
 
 /// Emit a loan created event
 pub fn emit_loan_created(
@@ -107,6 +108,25 @@ pub fn emit_late_fee_accrued(
     env.events().publish(
         (LOAN_LATE_FEE, borrower, loan_id),
         (fee_amount, new_remaining_balance, env.ledger().timestamp()),
+    );
+}
+
+/// Emitted when a single installment is marked paid via `repay_installment`.
+pub fn emit_installment_paid(
+    env: &Env,
+    loan_id: u64,
+    installment_index: u32,
+    amount: i128,
+    remaining_balance: i128,
+) {
+    env.events().publish(
+        (INSTALLMENT_PAID, loan_id),
+        (
+            installment_index,
+            amount,
+            remaining_balance,
+            env.ledger().timestamp(),
+        ),
     );
 }
 

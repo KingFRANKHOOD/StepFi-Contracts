@@ -12,12 +12,22 @@ pub enum LoanStatus {
     Cancelled,
 }
 
+// Loan classification enum
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LoanType {
+    Standard,
+    LearnerInstallment,
+}
+
 // Repayment installment structure
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepaymentInstallment {
     pub due_date: u64, // Unix timestamp
     pub amount: i128,  // Amount due for this installment
+    pub paid: bool,    // Whether this installment has been paid
+    pub paid_at: u64,  // Unix timestamp of payment (0 = unpaid)
 }
 
 // Loan data structure
@@ -38,6 +48,7 @@ pub struct Loan {
     pub remaining_balance: i128,
     pub repayment_schedule: soroban_sdk::Vec<RepaymentInstallment>,
     pub status: LoanStatus,
+    pub loan_type: LoanType,
     pub created_at: u64,                  // Unix timestamp
     pub funded_at: u64,                   // 0 means not funded yet
     pub late_fees_outstanding: i128,      // accumulated unpaid late fees

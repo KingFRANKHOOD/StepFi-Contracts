@@ -1,6 +1,6 @@
 # StepFi Roadmap
 
-> Step into your future, pay small small.
+> Step into your future. Credit without banks. Progress without limits.
 
 This roadmap outlines the development phases for StepFi — a decentralized learner BNPL protocol on Stellar. Each phase builds on the previous one, moving from core infrastructure to a fully featured learner financing ecosystem.
 

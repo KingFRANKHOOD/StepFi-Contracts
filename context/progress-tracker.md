@@ -10,7 +10,7 @@ Update this file after every completed contract change, fix, or architectural de
 
 ## Current Goal
 
-All 5 contracts build cleanly. Next: add `LoanType::LearnerInstallment` to creditline-contract and per-installment tracking to `RepaymentInstallment`.
+`LoanType` and per-installment tracking are in. Next: per-loan grace period (Next Up #4), then vouching contract.
 
 ---
 
@@ -40,6 +40,16 @@ All 5 contracts build cleanly. Next: add `LoanType::LearnerInstallment` to credi
 ### Documentation
 - `README.md` fully rewritten as StepFi-Contracts 
 
+### LoanType + Per-Installment Tracking (creditline-contract)
+- Added `LoanType` enum (`Standard`, `LearnerInstallment`) to `types.rs`
+- Added `paid: bool` and `paid_at: u64` to `RepaymentInstallment`
+- Added `loan_type: LoanType` to `Loan`
+- Threaded `loan_type` through `create_loan`, `request_loan`, `build_loan`
+- New `repay_installment(borrower, loan_id, installment_index, amount) -> i128`: bounds-checks index, rejects already-paid slots, decrements `remaining_balance`, marks `paid`/`paid_at`, persists, emits `INSTPAID`
+- New errors: `InvalidInstallmentIndex = 23`, `InstallmentAlreadyPaid = 24`
+- New event: `INSTPAID` via `emit_installment_paid`
+- All 93 existing tests updated and passing; 0 failing
+
 ---
 
 ## In Progress
@@ -50,14 +60,11 @@ All 5 contracts build cleanly. Next: add `LoanType::LearnerInstallment` to credi
 
 ## Next Up (In Order)
 
-1. **LoanType enum** — Add `LoanType::LearnerInstallment` variant to `creditline-contract/src/types.rs`
-2. **Per-installment tracking** — Add `paid: bool` and `paid_at: u64` fields to `RepaymentInstallment` struct
-3. **repay_installment()** — New function targeting a specific installment by index (instead of just reducing remaining balance)
-4. **Learner grace period** — Make `grace_period_seconds` per-loan (not just global via parameters)
-5. **Vouching contract** — New `vouching-contract` crate: `vouch()`, `revoke_vouch()`, `get_vouches()`, `get_vouch_count()`
-6. **Reputation rules** — Update `creditline-contract` to call different reputation adjustments for `LoanType::LearnerInstallment`
-7. **Testnet deployment** — Deploy all contracts, capture IDs, add to StepFi-API `.env`
-8. **End-to-end validation** — Verify loan lifecycle on testnet via Stellar CLI
+1. **Learner grace period** — Make `grace_period_seconds` per-loan (not just global via parameters)
+2. **Vouching contract** — New `vouching-contract` crate: `vouch()`, `revoke_vouch()`, `get_vouches()`, `get_vouch_count()`
+3. **Reputation rules** — Update `creditline-contract` to call different reputation adjustments for `LoanType::LearnerInstallment`
+4. **Testnet deployment** — Deploy all contracts, capture IDs, add to StepFi-API `.env`
+5. **End-to-end validation** — Verify loan lifecycle on testnet via Stellar CLI
 
 ---
 
@@ -67,6 +74,7 @@ All 5 contracts build cleanly. Next: add `LoanType::LearnerInstallment` to credi
 - Should the vouching contract be a standalone crate or logic added to `creditline-contract`? (Leaning toward standalone for modularity)
 - What is the correct `grace_period_seconds` for learner installment loans? (Longer than standard BNPL — possibly 7-14 days per installment)
 - Should sponsor pool deposits go through `liquidity-pool-contract` or a new `sponsor-pool-contract`?
+- `repay_installment()` needs dedicated tests: happy path, double-pay rejection, out-of-bounds index, non-borrower rejection.
 
 ---
 
