@@ -1,5 +1,17 @@
-use parameters_contract::ProtocolParameters;
 use soroban_sdk::{contracttype, Address};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolParameters {
+    pub min_guarantee_percent: i128,
+    pub min_reputation_threshold: u32,
+    pub full_repayment_reward: u32,
+    pub default_penalty: u32,
+    pub large_loan_threshold: i128,
+    pub large_loan_default_penalty: u32,
+    pub base_interest_bps: u32,
+    pub grace_period_seconds: u64,
+}
 
 // Loan status enum
 #[contracttype]
@@ -56,7 +68,16 @@ pub struct Loan {
 }
 
 pub fn default_protocol_parameters() -> ProtocolParameters {
-    parameters_contract::default_parameters()
+    ProtocolParameters {
+        min_guarantee_percent: 20,
+        min_reputation_threshold: 50,
+        full_repayment_reward: 10,
+        default_penalty: 20,
+        large_loan_threshold: 5_000,
+        large_loan_default_penalty: 30,
+        base_interest_bps: 0,
+        grace_period_seconds: 0,
+    }
 }
 
 // Constants

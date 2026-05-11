@@ -1,12 +1,22 @@
 #![no_std]
-use liquidity_pool_contract::LiquidityPoolContractClient;
-use vendor_registry_contract::VendorRegistryContractClient;
-use parameters_contract::ProtocolParameters;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Env, IntoVal, Symbol,
     Val, Vec,
 };
+
+mod liquidity_pool {
+    soroban_sdk::contractimport!(
+        file = "../../target/wasm32-unknown-unknown/release/liquidity_pool_contract.wasm"
+    );
+}
+mod vendor_registry {
+    soroban_sdk::contractimport!(
+        file = "../../target/wasm32-unknown-unknown/release/vendor_registry_contract.wasm"
+    );
+}
+use liquidity_pool::Client as LiquidityPoolContractClient;
+use vendor_registry::Client as VendorRegistryContractClient;
 
 mod access;
 mod errors;
@@ -15,7 +25,7 @@ mod storage;
 mod types;
 
 pub use errors::CreditLineError;
-pub use types::{default_protocol_parameters, Loan, LoanStatus, LoanType, RepaymentInstallment};
+pub use types::{default_protocol_parameters, Loan, LoanStatus, LoanType, ProtocolParameters, RepaymentInstallment};
 
 #[contract]
 pub struct CreditLineContract;
