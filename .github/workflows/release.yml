@@ -5,9 +5,18 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
 jobs:
   release-parameters:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       release_name: ${{ github.ref_name }}
       release_description: 'StepFi Protocol — Parameters Contract'
@@ -18,6 +27,10 @@ jobs:
 
   release-reputation:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       release_name: ${{ github.ref_name }}
       release_description: 'StepFi Protocol — Reputation Contract'
@@ -28,6 +41,10 @@ jobs:
 
   release-vendor-registry:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       release_name: ${{ github.ref_name }}
       release_description: 'StepFi Protocol — Vendor Registry Contract'
@@ -38,6 +55,10 @@ jobs:
 
   release-liquidity-pool:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       release_name: ${{ github.ref_name }}
       release_description: 'StepFi Protocol — Liquidity Pool Contract'
@@ -51,6 +72,10 @@ jobs:
       - release-liquidity-pool
       - release-vendor-registry
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       release_name: ${{ github.ref_name }}
       release_description: 'StepFi Protocol — Creditline Contract'
