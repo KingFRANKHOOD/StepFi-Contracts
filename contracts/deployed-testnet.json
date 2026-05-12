@@ -32,10 +32,12 @@
       "initMethod": "initialize(token, treasury, admin, merchant_fund)"
     },
     "creditline": {
-      "id": "CCWFD2J2NQS56HFNPG2S4HUR2LBA3O7NDQCB35C5JD7EBQUZ63G3LBCP",
+      "id": "CAQDHYG3TALPNXG466SZUMJEPOI7VYV732LPFF3GHE4ASPBCNMIQBS3X",
       "initialized": true,
-      "initializedAt": "2026-05-11",
-      "initMethod": "initialize(vendor_registry, liquidity_pool, reputation_contract, token, admin)"
+      "initializedAt": "2026-05-12",
+      "initMethod": "initialize(vendor_registry, liquidity_pool, reputation_contract, token, admin)",
+      "previousId": "CCWFD2J2NQS56HFNPG2S4HUR2LBA3O7NDQCB35C5JD7EBQUZ63G3LBCP",
+      "wasmHash": "392ad2562e8836a2836695bb4ed32973bde100b243b5f695ddf2698464541c9e"
     }
   }
 }
