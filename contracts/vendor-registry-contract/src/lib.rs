@@ -3,6 +3,7 @@
 mod access;
 mod errors;
 mod events;
+mod safe_math;
 mod storage;
 mod types;
 

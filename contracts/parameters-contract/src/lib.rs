@@ -3,6 +3,7 @@
 mod access;
 mod errors;
 mod events;
+mod safe_math;
 mod storage;
 mod types;
 
@@ -81,9 +82,7 @@ impl ParametersContract {
     }
 
     fn enter_non_reentrant(env: &Env) {
-        if storage::is_reentrancy_locked(env)
-            .unwrap_or_else(|err| panic_with_error!(env, err))
-        {
+        if storage::is_reentrancy_locked(env).unwrap_or_else(|err| panic_with_error!(env, err)) {
             panic_with_error!(env, ParametersError::ReentrancyDetected);
         }
         storage::set_reentrancy_locked(env, true);

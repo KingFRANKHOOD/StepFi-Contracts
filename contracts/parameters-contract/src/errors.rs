@@ -9,4 +9,6 @@ pub enum ParametersError {
     InvalidParameters = 3,
     NotInitialized = 4,
     ReentrancyDetected = 5,
+    Overflow = 6,
+    Underflow = 7,
 }

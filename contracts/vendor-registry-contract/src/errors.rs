@@ -12,4 +12,5 @@ pub enum Error {
     Unauthorized = 6,
     Overflow = 7,
     ReentrancyDetected = 8,
+    Underflow = 9,
 }

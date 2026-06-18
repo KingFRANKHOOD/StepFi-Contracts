@@ -5,6 +5,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 mod access;
 mod errors;
 mod events;
+mod safe_math;
 mod storage;
 mod types;
 
@@ -31,7 +32,12 @@ impl ReputationContract {
 
     /// Increase a user's reputation score by a given amount
     /// Requires authorization from an updater
-    pub fn increase_score(env: Env, updater: Address, user: Address, amount: u32) {
+    pub fn increase_score(
+        env: Env,
+        updater: Address,
+        user: Address,
+        amount: u32,
+    ) -> Result<(), ReputationError> {
         updater.require_auth();
         access::require_updater(&env, &updater);
 
@@ -39,13 +45,10 @@ impl ReputationContract {
 
         let old_score = storage::read_score(&env, &user)
             .unwrap_or_else(|err| soroban_sdk::panic_with_error!(&env, err));
-        let new_score = old_score
-            .checked_add(amount)
-            .ok_or(ReputationError::Overflow)
-            .unwrap();
+        let new_score = safe_math::add_u32(old_score, amount)?;
 
         if new_score > types::MAX_SCORE {
-            soroban_sdk::panic_with_error!(&env, ReputationError::Overflow);
+            return Err(ReputationError::Overflow);
         }
 
         storage::write_score(&env, &user, new_score);
@@ -54,11 +57,17 @@ impl ReputationContract {
         events::emit_score_changed(&env, &user, old_score, new_score, &reason);
 
         Self::exit_non_reentrant(&env);
+        Ok(())
     }
 
     /// Decrease a user's reputation score by a given amount
     /// Requires authorization from an updater
-    pub fn decrease_score(env: Env, updater: Address, user: Address, amount: u32) {
+    pub fn decrease_score(
+        env: Env,
+        updater: Address,
+        user: Address,
+        amount: u32,
+    ) -> Result<(), ReputationError> {
         updater.require_auth();
         access::require_updater(&env, &updater);
 
@@ -66,10 +75,7 @@ impl ReputationContract {
 
         let old_score = storage::read_score(&env, &user)
             .unwrap_or_else(|err| soroban_sdk::panic_with_error!(&env, err));
-        let new_score = match old_score.checked_sub(amount) {
-            Some(score) => score,
-            None => soroban_sdk::panic_with_error!(&env, ReputationError::Underflow),
-        };
+        let new_score = safe_math::sub_u32(old_score, amount)?;
 
         storage::write_score(&env, &user, new_score);
 
@@ -77,6 +83,7 @@ impl ReputationContract {
         events::emit_score_changed(&env, &user, old_score, new_score, &reason);
 
         Self::exit_non_reentrant(&env);
+        Ok(())
     }
 
     /// Set a user's reputation score to a specific value
@@ -103,7 +110,12 @@ impl ReputationContract {
 
     /// Add a mentor vouching boost to a user's reputation score.
     /// Requires authorization from an updater.
-    pub fn add_boost(env: Env, updater: Address, user: Address, amount: u32) {
+    pub fn add_boost(
+        env: Env,
+        updater: Address,
+        user: Address,
+        amount: u32,
+    ) -> Result<(), ReputationError> {
         updater.require_auth();
         access::require_updater(&env, &updater);
 
@@ -111,13 +123,10 @@ impl ReputationContract {
 
         let old_score = storage::read_score(&env, &user)
             .unwrap_or_else(|err| soroban_sdk::panic_with_error!(&env, err));
-        let new_score = old_score
-            .checked_add(amount)
-            .ok_or(ReputationError::Overflow)
-            .unwrap();
+        let new_score = safe_math::add_u32(old_score, amount)?;
 
         if new_score > types::MAX_SCORE {
-            soroban_sdk::panic_with_error!(&env, ReputationError::Overflow);
+            return Err(ReputationError::Overflow);
         }
 
         storage::write_score(&env, &user, new_score);
@@ -126,11 +135,17 @@ impl ReputationContract {
         events::emit_score_changed(&env, &user, old_score, new_score, &reason);
 
         Self::exit_non_reentrant(&env);
+        Ok(())
     }
 
     /// Remove a mentor vouching boost from a user's reputation score.
     /// Requires authorization from an updater.
-    pub fn remove_boost(env: Env, updater: Address, user: Address, amount: u32) {
+    pub fn remove_boost(
+        env: Env,
+        updater: Address,
+        user: Address,
+        amount: u32,
+    ) -> Result<(), ReputationError> {
         updater.require_auth();
         access::require_updater(&env, &updater);
 
@@ -138,10 +153,7 @@ impl ReputationContract {
 
         let old_score = storage::read_score(&env, &user)
             .unwrap_or_else(|err| soroban_sdk::panic_with_error!(&env, err));
-        let new_score = match old_score.checked_sub(amount) {
-            Some(score) => score,
-            None => soroban_sdk::panic_with_error!(&env, ReputationError::Underflow),
-        };
+        let new_score = safe_math::sub_u32(old_score, amount)?;
 
         storage::write_score(&env, &user, new_score);
 
@@ -149,6 +161,7 @@ impl ReputationContract {
         events::emit_score_changed(&env, &user, old_score, new_score, &reason);
 
         Self::exit_non_reentrant(&env);
+        Ok(())
     }
 
     /// Set or remove an address as an authorized updater

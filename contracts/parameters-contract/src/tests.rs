@@ -2,11 +2,7 @@ use crate::{
     default_parameters, ParametersContract, ParametersContractClient, ParametersError,
     ProtocolParameters,
 };
-use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Env, Symbol,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup() -> (Env, ParametersContractClient<'static>, Address) {
     let env = Env::default();

@@ -14,4 +14,6 @@ pub enum VouchingError {
     InvalidBoost = 8,
     ReputationCallFailed = 9,
     ReentrancyDetected = 10,
+    Overflow = 11,
+    Underflow = 12,
 }

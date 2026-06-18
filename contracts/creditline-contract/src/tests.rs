@@ -3044,3 +3044,21 @@ fn test_repay_installment_zero_amount_rejected() {
     // Zero-amount payment must be rejected
     t.client.repay_installment(&user, &loan_id, &0, &0);
 }
+
+#[test]
+fn test_safe_math_boundaries() {
+    use crate::safe_math;
+    // 0 cases
+    assert_eq!(safe_math::add_i128(0, 0), Ok(0));
+    assert_eq!(safe_math::sub_i128(0, 0), Ok(0));
+    assert_eq!(safe_math::mul_i128(0, 0), Ok(0));
+    assert_eq!(safe_math::div_i128(0, 5), Ok(0));
+
+    // max cases
+    let max = i128::MAX;
+    let min = i128::MIN;
+    assert_eq!(safe_math::add_i128(max, 1), Err(CreditLineError::Overflow));
+    assert_eq!(safe_math::sub_i128(min, 1), Err(CreditLineError::Underflow));
+    assert_eq!(safe_math::mul_i128(max, 2), Err(CreditLineError::Overflow));
+    assert_eq!(safe_math::div_i128(max, 0), Err(CreditLineError::Overflow));
+}

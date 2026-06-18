@@ -21,6 +21,7 @@ use vendor_registry::Client as VendorRegistryContractClient;
 mod access;
 mod errors;
 mod events;
+mod safe_math;
 mod storage;
 mod types;
 
@@ -69,13 +70,13 @@ impl CreditLineContract {
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
         loan_type: LoanType,
-    ) -> u64 {
+    ) -> Result<u64, CreditLineError> {
         user.require_auth();
 
-        Self::validate_guarantee(&env, total_amount, guarantee_amount);
-        Self::validate_vendor(&env, &vendor);
-        let score = Self::validate_reputation(&env, &user);
-        Self::validate_liquidity(&env, total_amount, guarantee_amount);
+        Self::validate_guarantee(&env, total_amount, guarantee_amount)?;
+        Self::validate_vendor(&env, &vendor)?;
+        let score = Self::validate_reputation(&env, &user)?;
+        Self::validate_liquidity(&env, total_amount, guarantee_amount)?;
         Self::enter_non_reentrant(&env);
 
         let mut loan = Self::build_loan(
@@ -88,7 +89,7 @@ impl CreditLineContract {
             score,
             LoanStatus::Active,
             loan_type,
-        );
+        )?;
         loan.funded_at = env.ledger().timestamp();
 
         storage::increase_user_active_debt(&env, &user, loan.remaining_balance)
@@ -96,9 +97,7 @@ impl CreditLineContract {
         let loan_id = loan.loan_id;
         storage::write_loan(&env, &loan);
 
-        let pool_contribution = total_amount
-            .checked_sub(guarantee_amount)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let pool_contribution = safe_math::sub_i128(total_amount, guarantee_amount)?;
         Self::fund_loan_from_pool(&env, &user, &vendor, guarantee_amount, pool_contribution);
 
         events::emit_loan_created(
@@ -112,7 +111,7 @@ impl CreditLineContract {
         );
 
         Self::exit_non_reentrant(&env);
-        loan_id
+        Ok(loan_id)
     }
 
     pub fn request_loan(
@@ -123,11 +122,11 @@ impl CreditLineContract {
         guarantee_amount: i128,
         repayment_schedule: Vec<RepaymentInstallment>,
         loan_type: LoanType,
-    ) -> u64 {
+    ) -> Result<u64, CreditLineError> {
         user.require_auth();
 
-        Self::validate_guarantee(&env, total_amount, guarantee_amount);
-        let score = Self::validate_reputation(&env, &user);
+        Self::validate_guarantee(&env, total_amount, guarantee_amount)?;
+        let score = Self::validate_reputation(&env, &user)?;
         let loan = Self::build_loan(
             &env,
             user.clone(),
@@ -138,11 +137,9 @@ impl CreditLineContract {
             score,
             LoanStatus::Pending,
             loan_type,
-        );
+        )?;
 
-        let token_address = storage::get_token(&env)
-            .unwrap_or_else(|err| panic_with_error!(&env, err))
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::TokenNotConfigured));
+        let token_address = storage::get_token(&env)?.ok_or(CreditLineError::TokenNotConfigured)?;
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&user, &env.current_contract_address(), &guarantee_amount);
 
@@ -159,7 +156,7 @@ impl CreditLineContract {
             &repayment_schedule,
         );
 
-        loan_id
+        Ok(loan_id)
     }
 
     pub fn get_user_loans(env: Env, borrower: Address, start: u64, limit: u32) -> Vec<Loan> {
@@ -223,30 +220,35 @@ impl CreditLineContract {
         storage::set_parameters_contract(&env, &address);
     }
 
-    fn validate_guarantee(env: &Env, total_amount: i128, guarantee_amount: i128) {
+    fn validate_guarantee(
+        env: &Env,
+        total_amount: i128,
+        guarantee_amount: i128,
+    ) -> Result<(), CreditLineError> {
         if total_amount <= 0 || guarantee_amount <= 0 {
-            panic_with_error!(env, CreditLineError::InvalidAmount);
+            return Err(CreditLineError::InvalidAmount);
         }
 
         if guarantee_amount > total_amount {
-            panic_with_error!(env, CreditLineError::InvalidAmount);
+            return Err(CreditLineError::InvalidAmount);
         }
 
         let params = Self::get_protocol_parameters(env);
-        let min_guarantee = total_amount
-            .checked_mul(params.min_guarantee_percent)
-            .and_then(|v| v.checked_div(100))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::Overflow));
+        let min_guarantee = safe_math::div_i128(
+            safe_math::mul_i128(total_amount, params.min_guarantee_percent)?,
+            100,
+        )?;
 
         if guarantee_amount < min_guarantee {
-            panic_with_error!(env, CreditLineError::InsufficientGuarantee);
+            return Err(CreditLineError::InsufficientGuarantee);
         }
+        Ok(())
     }
 
-    fn validate_vendor(env: &Env, vendor: &Address) {
+    fn validate_vendor(env: &Env, vendor: &Address) -> Result<(), CreditLineError> {
         let vendor_registry = storage::get_vendor_registry(env)
             .unwrap_or_else(|err| panic_with_error!(env, err))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::InvalidVendor));
+            .ok_or(CreditLineError::InvalidVendor)?;
 
         let registry_client = VendorRegistryContractClient::new(env, &vendor_registry);
         let is_active = env
@@ -255,18 +257,19 @@ impl CreditLineContract {
                 &symbol_short!("is_active"),
                 (vendor,).into_val(env),
             )
-            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::VendorValidationFailed))
-            .unwrap_or_else(|_| panic_with_error!(env, CreditLineError::VendorValidationFailed));
+            .map_err(|_| CreditLineError::VendorValidationFailed)?
+            .map_err(|_| CreditLineError::VendorValidationFailed)?;
 
         if !is_active {
-            panic_with_error!(env, CreditLineError::VendorNotActive);
+            return Err(CreditLineError::VendorNotActive);
         }
+        Ok(())
     }
 
-    fn validate_reputation(env: &Env, user: &Address) -> u32 {
+    fn validate_reputation(env: &Env, user: &Address) -> Result<u32, CreditLineError> {
         let reputation_contract = storage::get_reputation_contract(env)
             .unwrap_or_else(|err| panic_with_error!(env, err))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::ParametersUnavailable));
+            .ok_or(CreditLineError::ParametersUnavailable)?;
 
         let score: u32 = env.invoke_contract(
             &reputation_contract,
@@ -276,31 +279,34 @@ impl CreditLineContract {
 
         let params = Self::get_protocol_parameters(env);
         if score < params.min_reputation_threshold {
-            panic_with_error!(env, CreditLineError::InsufficientReputation);
+            return Err(CreditLineError::InsufficientReputation);
         }
 
-        score
+        Ok(score)
     }
 
-    fn validate_liquidity(env: &Env, total_amount: i128, guarantee_amount: i128) {
+    fn validate_liquidity(
+        env: &Env,
+        total_amount: i128,
+        guarantee_amount: i128,
+    ) -> Result<(), CreditLineError> {
         let liquidity_pool = storage::get_liquidity_pool(env)
             .unwrap_or_else(|err| panic_with_error!(env, err))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::InsufficientLiquidity));
+            .ok_or(CreditLineError::InsufficientLiquidity)?;
 
-        let required_from_pool = total_amount
-            .checked_sub(guarantee_amount)
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::Underflow));
+        let required_from_pool = safe_math::sub_i128(total_amount, guarantee_amount)?;
 
         if required_from_pool == 0 {
-            return;
+            return Ok(());
         }
 
         let lp_client = LiquidityPoolContractClient::new(env, &liquidity_pool);
         let stats = lp_client.get_pool_stats();
 
         if stats.available_liquidity < required_from_pool {
-            panic_with_error!(env, CreditLineError::InsufficientLiquidity);
+            return Err(CreditLineError::InsufficientLiquidity);
         }
+        Ok(())
     }
 
     fn fund_loan_from_pool(
@@ -338,33 +344,31 @@ impl CreditLineContract {
         score: u32,
         status: LoanStatus,
         loan_type: LoanType,
-    ) -> Loan {
-        Self::validate_guarantee(env, total_amount, guarantee_amount);
-        Self::validate_vendor(env, &vendor);
+    ) -> Result<Loan, CreditLineError> {
+        Self::validate_guarantee(env, total_amount, guarantee_amount)?;
+        Self::validate_vendor(env, &vendor)?;
 
         let interest_rate_bps = Self::interest_rate_bps(env, score);
         let interest_amount =
-            Self::calculate_bps_amount(env, total_amount, interest_rate_bps as i128);
+            Self::calculate_bps_amount(env, total_amount, interest_rate_bps as i128)?;
         let service_fee_amount =
-            Self::calculate_bps_amount(env, total_amount, types::SERVICE_FEE_BPS);
-        let remaining_balance = total_amount
-            .checked_add(interest_amount)
-            .and_then(|v| v.checked_add(service_fee_amount))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::Overflow));
+            Self::calculate_bps_amount(env, total_amount, types::SERVICE_FEE_BPS)?;
+        let remaining_balance = safe_math::add_i128(
+            safe_math::add_i128(total_amount, interest_amount)?,
+            service_fee_amount,
+        )?;
 
         let credit_limit = Self::credit_limit(score);
         let active_debt = storage::get_user_active_debt(env, &user)
             .unwrap_or_else(|err| panic_with_error!(env, err));
-        let next_debt = active_debt
-            .checked_add(remaining_balance)
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::Overflow));
+        let next_debt = safe_math::add_i128(active_debt, remaining_balance)?;
         if next_debt > credit_limit {
-            panic_with_error!(env, CreditLineError::ExposureLimitExceeded);
+            return Err(CreditLineError::ExposureLimitExceeded);
         }
 
         let loan_id =
             storage::increment_loan_counter(env).unwrap_or_else(|err| panic_with_error!(env, err));
-        Loan {
+        Ok(Loan {
             loan_id,
             borrower: user,
             vendor,
@@ -384,13 +388,11 @@ impl CreditLineContract {
             funded_at: 0,
             late_fees_outstanding: 0,
             late_fee_accrual_timestamp: 0,
-        }
+        })
     }
 
-    fn calculate_bps_amount(env: &Env, base: i128, bps: i128) -> i128 {
-        base.checked_mul(bps)
-            .and_then(|v| v.checked_div(types::BPS_DENOMINATOR))
-            .unwrap_or_else(|| panic_with_error!(env, CreditLineError::Overflow))
+    fn calculate_bps_amount(_env: &Env, base: i128, bps: i128) -> Result<i128, CreditLineError> {
+        safe_math::div_i128(safe_math::mul_i128(base, bps)?, types::BPS_DENOMINATOR)
     }
 
     fn interest_rate_bps(env: &Env, score: u32) -> u32 {
@@ -604,23 +606,27 @@ impl CreditLineContract {
         events::emit_loan_cancelled(&env, &loan.borrower, loan_id, loan.guarantee_amount);
     }
 
-    pub fn repay_loan(env: Env, borrower: Address, loan_id: u64, amount: i128) -> i128 {
+    pub fn repay_loan(
+        env: Env,
+        borrower: Address,
+        loan_id: u64,
+        amount: i128,
+    ) -> Result<i128, CreditLineError> {
         borrower.require_auth();
 
-        let mut loan =
-            storage::read_loan(&env, loan_id).unwrap_or_else(|err| panic_with_error!(&env, err));
+        let mut loan = storage::read_loan(&env, loan_id)?;
 
         if loan.borrower != borrower {
-            panic_with_error!(&env, CreditLineError::UnauthorizedRepayer);
+            return Err(CreditLineError::UnauthorizedRepayer);
         }
 
         if loan.status != LoanStatus::Active {
-            panic_with_error!(&env, CreditLineError::LoanNotActive);
+            return Err(CreditLineError::LoanNotActive);
         }
 
         // Accrue any outstanding late fees before validating the payment amount so
         // the borrower repays the true current balance (principal + interest + fees + late fees).
-        let accrued_fee = Self::accrue_late_fees_internal(&env, &mut loan);
+        let accrued_fee = Self::accrue_late_fees_internal(&env, &mut loan)?;
         if accrued_fee > 0 {
             storage::increase_user_active_debt(&env, &borrower, accrued_fee)
                 .unwrap_or_else(|err| panic_with_error!(&env, err));
@@ -634,47 +640,28 @@ impl CreditLineContract {
         }
 
         if amount <= 0 || amount > loan.remaining_balance {
-            panic_with_error!(&env, CreditLineError::InvalidRepaymentAmount);
+            return Err(CreditLineError::InvalidRepaymentAmount);
         }
 
         Self::enter_non_reentrant(&env);
 
         // Payment priority: principal → interest → service fee → late fees
         let principal_paid = amount.min(loan.principal_outstanding);
-        let after_principal = amount
-            .checked_sub(principal_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let after_principal = safe_math::sub_i128(amount, principal_paid)?;
         let interest_paid = after_principal.min(loan.interest_outstanding);
-        let after_interest = after_principal
-            .checked_sub(interest_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let after_interest = safe_math::sub_i128(after_principal, interest_paid)?;
         let fee_paid = after_interest.min(loan.service_fee_outstanding);
-        let after_fee = after_interest
-            .checked_sub(fee_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let after_fee = safe_math::sub_i128(after_interest, fee_paid)?;
         let late_fee_paid = after_fee.min(loan.late_fees_outstanding);
 
-        loan.principal_outstanding = loan
-            .principal_outstanding
-            .checked_sub(principal_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
-        loan.interest_outstanding = loan
-            .interest_outstanding
-            .checked_sub(interest_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
-        loan.service_fee_outstanding = loan
-            .service_fee_outstanding
-            .checked_sub(fee_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
-        loan.late_fees_outstanding = loan
-            .late_fees_outstanding
-            .checked_sub(late_fee_paid)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        loan.principal_outstanding =
+            safe_math::sub_i128(loan.principal_outstanding, principal_paid)?;
+        loan.interest_outstanding = safe_math::sub_i128(loan.interest_outstanding, interest_paid)?;
+        loan.service_fee_outstanding = safe_math::sub_i128(loan.service_fee_outstanding, fee_paid)?;
+        loan.late_fees_outstanding =
+            safe_math::sub_i128(loan.late_fees_outstanding, late_fee_paid)?;
 
-        let new_balance = loan
-            .remaining_balance
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let new_balance = safe_math::sub_i128(loan.remaining_balance, amount)?;
 
         loan.remaining_balance = new_balance;
         let is_fully_repaid = new_balance == 0;
@@ -686,25 +673,21 @@ impl CreditLineContract {
             .unwrap_or_else(|err| panic_with_error!(&env, err));
         storage::write_loan(&env, &loan);
 
-        let lp_address = storage::get_liquidity_pool(&env)
-            .unwrap_or_else(|err| panic_with_error!(&env, err))
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::InsufficientLiquidity));
-        let token_address = storage::get_token(&env)
-            .unwrap_or_else(|err| panic_with_error!(&env, err))
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::TokenNotConfigured));
+        let lp_address =
+            storage::get_liquidity_pool(&env)?.ok_or(CreditLineError::InsufficientLiquidity)?;
+        let token_address = storage::get_token(&env)?.ok_or(CreditLineError::TokenNotConfigured)?;
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&borrower, &env.current_contract_address(), &amount);
         Self::authorize_token_transfer(&env, &token_address, &lp_address, amount);
 
         let lp_client = LiquidityPoolContractClient::new(&env, &lp_address);
+        let interest_fee_late =
+            safe_math::add_i128(safe_math::add_i128(interest_paid, fee_paid)?, late_fee_paid)?;
         lp_client.receive_repayment(
             &env.current_contract_address(),
             &principal_paid,
-            &interest_paid
-                .checked_add(fee_paid)
-                .and_then(|v| v.checked_add(late_fee_paid))
-                .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Overflow)),
+            &interest_fee_late,
         );
 
         if is_fully_repaid {
@@ -725,9 +708,7 @@ impl CreditLineContract {
         );
 
         if is_fully_repaid {
-            if let Some(reputation_contract) = storage::get_reputation_contract(&env)
-                .unwrap_or_else(|err| panic_with_error!(&env, err))
-            {
+            if let Some(reputation_contract) = storage::get_reputation_contract(&env)? {
                 let updater = env.current_contract_address();
                 let payment_date = env.ledger().timestamp();
                 let due_date = loan
@@ -747,7 +728,7 @@ impl CreditLineContract {
         }
 
         Self::exit_non_reentrant(&env);
-        new_balance
+        Ok(new_balance)
     }
 
     /// Mark a single installment paid and reduce the loan's outstanding balance by `amount`.
@@ -760,43 +741,39 @@ impl CreditLineContract {
         loan_id: u64,
         installment_index: u32,
         amount: i128,
-    ) -> i128 {
+    ) -> Result<i128, CreditLineError> {
         borrower.require_auth();
 
-        let mut loan =
-            storage::read_loan(&env, loan_id).unwrap_or_else(|err| panic_with_error!(&env, err));
+        let mut loan = storage::read_loan(&env, loan_id)?;
 
         if loan.borrower != borrower {
-            panic_with_error!(&env, CreditLineError::UnauthorizedRepayer);
+            return Err(CreditLineError::UnauthorizedRepayer);
         }
 
         if loan.status != LoanStatus::Active {
-            panic_with_error!(&env, CreditLineError::LoanNotActive);
+            return Err(CreditLineError::LoanNotActive);
         }
 
         if installment_index >= loan.repayment_schedule.len() {
-            panic_with_error!(&env, CreditLineError::InvalidInstallmentIndex);
+            return Err(CreditLineError::InvalidInstallmentIndex);
         }
 
         let mut installment = loan
             .repayment_schedule
             .get(installment_index)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::InvalidInstallmentIndex));
+            .ok_or(CreditLineError::InvalidInstallmentIndex)?;
 
         if installment.paid {
-            panic_with_error!(&env, CreditLineError::InstallmentAlreadyPaid);
+            return Err(CreditLineError::InstallmentAlreadyPaid);
         }
 
         if amount <= 0 || amount > loan.remaining_balance {
-            panic_with_error!(&env, CreditLineError::InvalidRepaymentAmount);
+            return Err(CreditLineError::InvalidRepaymentAmount);
         }
 
         Self::enter_non_reentrant(&env);
 
-        let new_balance = loan
-            .remaining_balance
-            .checked_sub(amount)
-            .unwrap_or_else(|| panic_with_error!(&env, CreditLineError::Underflow));
+        let new_balance = safe_math::sub_i128(loan.remaining_balance, amount)?;
         loan.remaining_balance = new_balance;
 
         installment.paid = true;
@@ -814,7 +791,7 @@ impl CreditLineContract {
         events::emit_installment_paid(&env, loan_id, installment_index, amount, new_balance);
 
         Self::exit_non_reentrant(&env);
-        new_balance
+        Ok(new_balance)
     }
 
     /// Accrue late fees for a loan and update the caller-supplied `loan` in place.
@@ -825,7 +802,7 @@ impl CreditLineContract {
     /// carries over to the next accrual.
     ///
     /// Returns the newly accrued fee amount (0 if nothing was due).
-    fn accrue_late_fees_internal(env: &Env, loan: &mut Loan) -> i128 {
+    fn accrue_late_fees_internal(env: &Env, loan: &mut Loan) -> Result<i128, CreditLineError> {
         let now = env.ledger().timestamp();
 
         // Find the earliest overdue installment due date.
@@ -847,7 +824,7 @@ impl CreditLineContract {
 
         let overdue_since = match overdue_since {
             Some(d) => d,
-            None => return 0, // no overdue installments
+            None => return Ok(0), // no overdue installments
         };
 
         // Accrue from the later of (first overdue date, last accrual timestamp).
@@ -860,41 +837,40 @@ impl CreditLineContract {
         };
 
         if now <= accrual_start {
-            return 0;
+            return Ok(0);
         }
 
-        let seconds_elapsed = now - accrual_start;
-        let days_elapsed = (seconds_elapsed / types::SECONDS_PER_DAY) as i128;
+        let seconds_elapsed = safe_math::sub_u64(now, accrual_start)?;
+        let days_elapsed =
+            safe_math::div_i128(seconds_elapsed as i128, types::SECONDS_PER_DAY as i128)?;
 
         if days_elapsed == 0 {
-            return 0; // less than one full day has passed since last accrual
+            return Ok(0); // less than one full day has passed since last accrual
         }
 
-        let fee = loan
-            .remaining_balance
-            .checked_mul(types::LATE_FEE_BPS_PER_DAY)
-            .and_then(|v| v.checked_mul(days_elapsed))
-            .and_then(|v| v.checked_div(types::BPS_DENOMINATOR))
-            .unwrap_or(0);
+        let fee = safe_math::div_i128(
+            safe_math::mul_i128(
+                safe_math::mul_i128(loan.remaining_balance, types::LATE_FEE_BPS_PER_DAY)?,
+                days_elapsed,
+            )?,
+            types::BPS_DENOMINATOR,
+        )
+        .unwrap_or(0);
 
         if fee == 0 {
-            return 0;
+            return Ok(0);
         }
 
         // Advance the accrual cursor by only complete days to avoid losing fractions.
-        loan.late_fee_accrual_timestamp =
-            accrual_start + (days_elapsed as u64) * types::SECONDS_PER_DAY;
+        loan.late_fee_accrual_timestamp = safe_math::add_u64(
+            accrual_start,
+            safe_math::mul_u64(days_elapsed as u64, types::SECONDS_PER_DAY)?,
+        )?;
 
-        loan.late_fees_outstanding = loan
-            .late_fees_outstanding
-            .checked_add(fee)
-            .unwrap_or(loan.late_fees_outstanding);
-        loan.remaining_balance = loan
-            .remaining_balance
-            .checked_add(fee)
-            .unwrap_or(loan.remaining_balance);
+        loan.late_fees_outstanding = safe_math::add_i128(loan.late_fees_outstanding, fee)?;
+        loan.remaining_balance = safe_math::add_i128(loan.remaining_balance, fee)?;
 
-        fee
+        Ok(fee)
     }
 
     /// Apply late fees to an active loan without requiring a repayment.
@@ -902,18 +878,17 @@ impl CreditLineContract {
     /// Anyone may call this to trigger fee accrual on an overdue loan.  Emits a
     /// `LOANLTFE` event when fees are accrued; is a no-op when no full day has
     /// elapsed since the last accrual or when no installment is overdue.
-    pub fn apply_late_fees(env: Env, loan_id: u64) {
-        let mut loan =
-            storage::read_loan(&env, loan_id).unwrap_or_else(|err| panic_with_error!(&env, err));
+    pub fn apply_late_fees(env: Env, loan_id: u64) -> Result<(), CreditLineError> {
+        let mut loan = storage::read_loan(&env, loan_id)?;
 
         if loan.status != LoanStatus::Active {
-            panic_with_error!(&env, CreditLineError::LoanNotActive);
+            return Err(CreditLineError::LoanNotActive);
         }
 
-        let accrued_fee = Self::accrue_late_fees_internal(&env, &mut loan);
+        let accrued_fee = Self::accrue_late_fees_internal(&env, &mut loan)?;
 
         if accrued_fee == 0 {
-            return;
+            return Ok(());
         }
 
         storage::increase_user_active_debt(&env, &loan.borrower, accrued_fee)
@@ -926,6 +901,7 @@ impl CreditLineContract {
             accrued_fee,
             loan.remaining_balance,
         );
+        Ok(())
     }
 
     fn handle_reputation_increase(
