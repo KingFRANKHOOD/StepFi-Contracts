@@ -16,6 +16,20 @@ Update this file after every completed contract change, fix, or architectural de
 
 ## Completed
 
+### Issue #7 — Vendor Approval Flow
+- Added `VendorStatus` enum (`Pending`, `Approved`, `Suspended`, `Rejected`) to `types.rs`
+- Replaced `active: bool` with `status: VendorStatus` in `VendorInfo`
+- `register_vendor()` now sets `status = VendorStatus::Pending` instead of immediately active
+- Added `approve_vendor()` (admin-only, requires Pending → Approved)
+- Added `suspend_vendor()` (admin-only, any status → Suspended)
+- `is_active()` returns `true` only for `Approved` vendors — automatically prevents unapproved/suspended vendors from receiving loans in `creditline-contract`
+- Legacy functions (`activate_vendor`, `deactivate_vendor`, `set_vendor_status`) updated to map to new enum
+- New error: `VendorNotPending = 10` in `vendor-registry-contract`
+- Updated `publish_vendor_status` event to emit `VendorStatus` instead of `bool`
+- All vendor-registry tests updated; 7 new tests added (approval flow, non-pending rejection, suspension, re-approval, reentrancy guards for approve/suspend)
+- Creditline tests updated to approve vendors after registration
+- No changes needed to `creditline-contract/src/lib.rs` — `validate_vendor()` already uses `is_active()` which now checks for `Approved`
+
 ### Workspace Cleanup
 - Removed dead code: `lp-contract` (superseded by `liquidity-pool-contract`)
 - Removed empty placeholder: `adapter-trustless-contract`
@@ -81,6 +95,13 @@ Update this file after every completed contract change, fix, or architectural de
 ## In Progress
 
 - None currently.
+
+## Recently Fixed
+
+### Issue #7 — Follow-up: Missing `approve_vendor` in `RealIntegrationCtx::register_vendor`
+- Discovered second `register_vendor` helper in `RealIntegrationCtx` (integration test struct, ~line 2390) that only called `register_vendor` without `approve_vendor`
+- All integration tests using `RealIntegrationCtx` created loans with `Pending` vendors → `validate_vendor` → `is_active` returned `false` → `VendorNotActive` (#3)
+- Added `self.vendor_registry.approve_vendor(&self.admin, vendor)` after registration in `RealIntegrationCtx::register_vendor`
 
 ---
 
