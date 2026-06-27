@@ -97,10 +97,11 @@ impl LiquidityPoolContract {
     // -------------------------------------------------------------------------
 
     /// Deposit `amount` tokens and receive shares representing pool ownership.
-    /// Deposit `amount` tokens and receive shares representing pool ownership.
     ///
-    /// **First deposit**: shares issued == amount (1:1 ratio).
-    /// **Subsequent deposits**: `shares = (amount × total_shares) / total_pool_value`
+    /// Shares are issued at the current share price:
+    /// `shares = (amount × PRECISION) / share_price`
+    ///
+    /// For the first deposit share_price == PRECISION, so `shares == amount`.
     ///
     /// Returns the number of shares issued.
     pub fn deposit(env: Env, provider: Address, amount: i128) -> Result<i128, LiquidityPoolError> {
@@ -112,40 +113,37 @@ impl LiquidityPoolContract {
 
         Self::enter_non_reentrant(&env);
 
-        let token = storage::get_token(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        let total_shares =
-            storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        let total_liquidity =
-            storage::get_total_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-
-        // Calculate shares to issue
-        let shares_issued = if total_shares == 0 || total_liquidity == 0 {
-            // First deposit: 1:1 ratio
-            amount
-        } else {
-            // Subsequent deposits: proportional to current pool value
-            safe_math::div_i128(safe_math::mul_i128(amount, total_shares)?, total_liquidity)?
-        };
+        let share_price = Self::calculate_share_price_internal(&env)?;
+        let shares_issued = safe_math::div_i128(
+            safe_math::mul_i128(amount, types::SHARE_PRICE_PRECISION)?,
+            share_price,
+        )?;
 
         if shares_issued <= 0 {
             return Err(LiquidityPoolError::InvalidAmount);
         }
 
-        // Update state
-        let new_shares = safe_math::add_i128(
-            storage::get_lp_shares(&env, &provider)
-                .unwrap_or_else(|err| panic_with_error!(&env, err)),
-            shares_issued,
-        )?;
+        let token = storage::get_token(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
+
+        // Update provider's shares
+        let provider_shares = storage::get_lp_shares(&env, &provider)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
+        let new_shares = safe_math::add_i128(provider_shares, shares_issued)?;
         storage::set_lp_shares(&env, &provider, new_shares);
 
+        // Update total shares
+        let total_shares = storage::get_total_shares(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
         let new_total_shares = safe_math::add_i128(total_shares, shares_issued)?;
         storage::set_total_shares(&env, new_total_shares);
 
+        // Update total liquidity
+        let total_liquidity = storage::get_total_liquidity(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
         let new_total_liquidity = safe_math::add_i128(total_liquidity, amount)?;
         storage::set_total_liquidity(&env, new_total_liquidity);
 
-        // Transfer tokens from provider to pool contract after state effects.
+        // Transfer tokens from provider to pool
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&provider, &env.current_contract_address(), &amount);
 
