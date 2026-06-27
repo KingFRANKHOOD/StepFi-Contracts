@@ -97,10 +97,11 @@ impl LiquidityPoolContract {
     // -------------------------------------------------------------------------
 
     /// Deposit `amount` tokens and receive shares representing pool ownership.
-    /// Deposit `amount` tokens and receive shares representing pool ownership.
     ///
-    /// **First deposit**: shares issued == amount (1:1 ratio).
-    /// **Subsequent deposits**: `shares = (amount × total_shares) / total_pool_value`
+    /// Shares are issued at the current share price:
+    /// `shares = (amount × PRECISION) / share_price`
+    ///
+    /// For the first deposit share_price == PRECISION, so `shares == amount`.
     ///
     /// Returns the number of shares issued.
     pub fn deposit(env: Env, provider: Address, amount: i128) -> Result<i128, LiquidityPoolError> {
@@ -112,40 +113,37 @@ impl LiquidityPoolContract {
 
         Self::enter_non_reentrant(&env);
 
-        let token = storage::get_token(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        let total_shares =
-            storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        let total_liquidity =
-            storage::get_total_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-
-        // Calculate shares to issue
-        let shares_issued = if total_shares == 0 || total_liquidity == 0 {
-            // First deposit: 1:1 ratio
-            amount
-        } else {
-            // Subsequent deposits: proportional to current pool value
-            safe_math::div_i128(safe_math::mul_i128(amount, total_shares)?, total_liquidity)?
-        };
+        let share_price = Self::calculate_share_price_internal(&env)?;
+        let shares_issued = safe_math::div_i128(
+            safe_math::mul_i128(amount, types::SHARE_PRICE_PRECISION)?,
+            share_price,
+        )?;
 
         if shares_issued <= 0 {
             return Err(LiquidityPoolError::InvalidAmount);
         }
 
-        // Update state
-        let new_shares = safe_math::add_i128(
-            storage::get_lp_shares(&env, &provider)
-                .unwrap_or_else(|err| panic_with_error!(&env, err)),
-            shares_issued,
-        )?;
+        let token = storage::get_token(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
+
+        // Update provider's shares
+        let provider_shares = storage::get_lp_shares(&env, &provider)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
+        let new_shares = safe_math::add_i128(provider_shares, shares_issued)?;
         storage::set_lp_shares(&env, &provider, new_shares);
 
+        // Update total shares
+        let total_shares = storage::get_total_shares(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
         let new_total_shares = safe_math::add_i128(total_shares, shares_issued)?;
         storage::set_total_shares(&env, new_total_shares);
 
+        // Update total liquidity
+        let total_liquidity = storage::get_total_liquidity(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
         let new_total_liquidity = safe_math::add_i128(total_liquidity, amount)?;
         storage::set_total_liquidity(&env, new_total_liquidity);
 
-        // Transfer tokens from provider to pool contract after state effects.
+        // Transfer tokens from provider to pool
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&provider, &env.current_contract_address(), &amount);
 
@@ -157,7 +155,7 @@ impl LiquidityPoolContract {
 
     /// Burn `shares` and return the proportional token amount to `provider`.
     ///
-    /// `amount = (shares × total_pool_value) / total_shares`
+    /// `amount = (shares × share_price) / PRECISION`
     ///
     /// Returns the number of tokens returned.
     pub fn withdraw(env: Env, provider: Address, shares: i128) -> Result<i128, LiquidityPoolError> {
@@ -175,21 +173,17 @@ impl LiquidityPoolContract {
             return Err(LiquidityPoolError::InsufficientShares);
         }
 
-        let total_shares =
-            storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        if total_shares == 0 {
-            return Err(LiquidityPoolError::ZeroTotalShares);
-        }
+        let share_price = Self::calculate_share_price_internal(&env)?;
+        let amount_returned = safe_math::div_i128(
+            safe_math::mul_i128(shares, share_price)?,
+            types::SHARE_PRICE_PRECISION,
+        )?;
 
         let total_liquidity =
             storage::get_total_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
         let locked_liquidity =
             storage::get_locked_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
         let available_liquidity = safe_math::sub_i128(total_liquidity, locked_liquidity)?;
-
-        // Calculate withdrawal amount proportionally
-        let amount_returned =
-            safe_math::div_i128(safe_math::mul_i128(shares, total_liquidity)?, total_shares)?;
 
         if amount_returned > available_liquidity {
             return Err(LiquidityPoolError::InsufficientLiquidity);
@@ -199,6 +193,8 @@ impl LiquidityPoolContract {
         let new_provider_shares = safe_math::sub_i128(provider_shares, shares)?;
         storage::set_lp_shares(&env, &provider, new_provider_shares);
 
+        let total_shares =
+            storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
         let new_total_shares = safe_math::sub_i128(total_shares, shares)?;
         storage::set_total_shares(&env, new_total_shares);
 
@@ -359,6 +355,24 @@ impl LiquidityPoolContract {
         res
     }
 
+    /// Accrue interest into the pool, increasing share price for all holders.
+    ///
+    /// This is a public alias for `distribute_interest` that makes the yield
+    /// mechanism explicit: calling this raises `total_liquidity` (by the LP
+    /// portion after fee split), which increases the share price for every
+    /// LP pro-rata.
+    ///
+    /// Fee split (same as `distribute_interest`):
+    ///   - 85 % → Liquidity Providers (share price increase)
+    ///   - 10 % → Protocol Treasury
+    ///   -  5 % → Merchant Incentive Fund
+    pub fn accumulate_interest(env: Env, interest_amount: i128) -> Result<(), LiquidityPoolError> {
+        Self::enter_non_reentrant(&env);
+        let res = Self::distribute_interest_internal(&env, interest_amount);
+        Self::exit_non_reentrant(&env);
+        res
+    }
+
     fn distribute_interest_internal(
         env: &Env,
         interest_amount: i128,
@@ -437,6 +451,12 @@ impl LiquidityPoolContract {
     // Queries
     // -------------------------------------------------------------------------
 
+    /// Return the current share price in basis points (10000 = 1.0).
+    pub fn get_share_price(env: Env) -> i128 {
+        Self::calculate_share_price_internal(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err))
+    }
+
     pub fn get_pool_stats(env: Env) -> PoolStats {
         let total_liquidity =
             storage::get_total_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
@@ -445,17 +465,8 @@ impl LiquidityPoolContract {
         let available_liquidity = total_liquidity.saturating_sub(locked_liquidity);
         let total_shares =
             storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-
-        // Share price in basis points: (total_liquidity × 10000) / total_shares
-        let share_price = if total_shares == 0 {
-            types::TOTAL_BPS // Default: 1.00 expressed as 10000 bps
-        } else {
-            safe_math::div_i128(
-                safe_math::mul_i128(total_liquidity, types::TOTAL_BPS).unwrap_or(0),
-                total_shares,
-            )
-            .unwrap_or(types::TOTAL_BPS)
-        };
+        let share_price = Self::calculate_share_price_internal(&env)
+            .unwrap_or_else(|err| panic_with_error!(&env, err));
 
         PoolStats {
             total_liquidity,
@@ -472,16 +483,13 @@ impl LiquidityPoolContract {
 
     /// Calculate how many tokens `shares` are worth at the current share price.
     pub fn calculate_withdrawal(env: Env, shares: i128) -> i128 {
-        let total_shares =
-            storage::get_total_shares(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
-        if total_shares == 0 {
+        let share_price = Self::calculate_share_price_internal(&env).unwrap_or(types::SHARE_PRICE_PRECISION);
+        if shares == 0 {
             return 0;
         }
-        let total_liquidity =
-            storage::get_total_liquidity(&env).unwrap_or_else(|err| panic_with_error!(&env, err));
         safe_math::div_i128(
-            safe_math::mul_i128(shares, total_liquidity).unwrap_or(0),
-            total_shares,
+            safe_math::mul_i128(shares, share_price).unwrap_or(0),
+            types::SHARE_PRICE_PRECISION,
         )
         .unwrap_or(0)
     }
@@ -489,6 +497,18 @@ impl LiquidityPoolContract {
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    fn calculate_share_price_internal(env: &Env) -> Result<i128, LiquidityPoolError> {
+        let total_shares = storage::get_total_shares(env)?;
+        let total_liquidity = storage::get_total_liquidity(env)?;
+        if total_shares == 0 || total_liquidity == 0 {
+            return Ok(types::SHARE_PRICE_PRECISION);
+        }
+        safe_math::div_i128(
+            safe_math::mul_i128(total_liquidity, types::SHARE_PRICE_PRECISION)?,
+            total_shares,
+        )
+    }
 
     fn require_admin(env: &Env, caller: &Address) {
         let admin = storage::get_admin(env).unwrap_or_else(|err| panic_with_error!(env, err));
