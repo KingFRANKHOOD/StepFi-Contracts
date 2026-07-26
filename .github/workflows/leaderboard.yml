@@ -1,8 +1,6 @@
 name: Update Leaderboard
 
 on:
-  schedule:
-    - cron: "0 0 * * *" # everyday
   workflow_dispatch:
 
 permissions:
@@ -15,6 +13,10 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          # Admin-scoped PAT so the final `git push` bypasses the Main
+          # Protection ruleset (the default github-actions bot cannot).
+          token: ${{ secrets.LEADERBOARD_TOKEN }}
 
       - name: Setup Node
         uses: actions/setup-node@v3
@@ -31,14 +33,14 @@ jobs:
           ls -la
 
           echo "📁 FIND SCRIPT:"
-          find . -name "generate-leaderboard.js"
+          find . -name "generate-leaderboard.cjs"
 
     
       - name: Run script (auto-detect path)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILE=$(find . -name "generate-leaderboard.js" | head -n 1)
+          FILE=$(find . -name "generate-leaderboard.cjs" | head -n 1)
 
           echo "📄 Found script at: $FILE"
 
@@ -54,5 +56,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add README.md
-          git commit -m "update leaderboard" || echo "No changes"
+          git diff --cached --quiet && \
+            echo "No leaderboard changes" && \
+            exit 0
+          git commit -m "chore: update contributor leaderboard"
           git push

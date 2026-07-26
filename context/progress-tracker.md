@@ -16,6 +16,15 @@ Update this file after every completed contract change, fix, or architectural de
 
 ## Completed
 
+### Issue #58 — Principal-Interest-Fee Repayment Waterfall
+- Added `RepaymentAllocation` struct and `apply_waterfall()` helper in `lib.rs` with correct priority: late fees → interest → service fee → principal
+- Fixed `repay_loan()` to use the corrected waterfall order (was principal-first, now late-fees-first)
+- Rewrote `repay_installment()` to: accrue late fees, apply waterfall, transfer tokens, call pool's `receive_repayment()`, return guarantee on full repayment, update reputation
+- Each `*_outstanding` bucket decremented correctly per payment
+- `remaining_balance == sum(all outstanding buckets)` invariant asserted in tests
+- Added 8 new tests: waterfall order verification, bucket invariant for both repay_loan and repay_installment, partial/full bucket decrementation, full repayment via repay_installment, active debt tracking
+- Updated `test_repay_loan_auto_accrues_late_fees` for new waterfall behavior (late fees paid first, not last)
+
 ### Issue #7 — Vendor Approval Flow
 - Added `VendorStatus` enum (`Pending`, `Approved`, `Suspended`, `Rejected`) to `types.rs`
 - Replaced `active: bool` with `status: VendorStatus` in `VendorInfo`
@@ -94,7 +103,15 @@ Update this file after every completed contract change, fix, or architectural de
 
 ## In Progress
 
-- None currently.
+### Issue #59 — Socialize Default Losses to Pool Share Price
+- Added `absorb_loss(creditline, principal_shortfall)` entrypoint to `liquidity-pool-contract` restricted to the registered CreditLine
+- Reduces both `locked_liquidity` and `total_liquidity` by the unrecovered principal, with independent caps to prevent negative accounting
+- Added `LQLOSS` event (`emit_loss_absorbed`) to liquidity-pool events
+- Updated `mark_defaulted()` to compute `principal_shortfall = principal_outstanding - guarantee_amount` and call `absorb_loss` after `receive_guarantee`
+- Added 8 LP pool tests: basic absorption, share price drop, capping, partial repayment flow, unauthorized caller rejection, zero/negative amount rejection, event emission
+- Added 4 creditline tests: absorb_loss called on default, zero-shortfall skip, partial repayment shortfall, end-to-end share price impact with real LP contract
+- Updated MockLiquidityPool and MockLiquidityPoolEmpty with `absorb_loss` stub for test compatibility
+- Fixed: `IntoVal` import moved before first usage in `test_mark_defaulted_loss_absorption_share_price_impact`
 
 ## Recently Fixed
 
@@ -118,7 +135,7 @@ Update this file after every completed contract change, fix, or architectural de
 
 1. **Learner grace period** — Make `grace_period_seconds` per-loan (not just global via parameters)
 2. **Reputation rules** — Update `creditline-contract` to call different reputation adjustments for `LoanType::LearnerInstallment`
-3. **Testnet deployment** — Deploy all contracts, capture IDs, add to StepFi-API `.env`
+3. **Testnet deployment** ✅ — All 5 contracts deployed and initialized (see Contract Deployment Status below); IDs in StepFi-API env config
 4. **End-to-end validation** — Verify loan lifecycle on testnet via Stellar CLI
 
 ---
@@ -144,13 +161,37 @@ Update this file after every completed contract change, fix, or architectural de
 
 ## Contract Deployment Status
 
+All 5 contracts are deployed, initialized, and active on Stellar testnet
+(matches `README.md` and StepFi-Web `VERIFICATION.md`). These are the IDs
+live clients (StepFi-Web `constants/config.ts`) point at:
+
 | Contract | Testnet Deployed | Contract ID | Last Deployed |
 |---|---|---|---|
-| `reputation-contract` | ❌ No | — | — |
-| `parameters-contract` | ❌ No | — | — |
-| `vendor-registry-contract` | ❌ No | — | — |
-| `liquidity-pool-contract` | ❌ No | — | — |
-| `creditline-contract` | ❌ No | — | — |
+| `reputation-contract` | ✅ Yes | `CC3BO57ZRJGA63QJBIBSOMI25Z3X2I5CYTARYRAUXUAILX6L3OWBL5SB` | 2026-05-11 |
+| `parameters-contract` | ✅ Yes | `CCAE72SKYX55C5L56DBEFIMFVXRUIJY6JYLBREHEWRFNOW7AX5NBIJ5B` | 2026-05-11 |
+| `vendor-registry-contract` | ✅ Yes | `CCZ6T6NYCDNI26VGTPXKKWQDR7JCIZZ24LCEG4MMYHZJAG6BPWIVAU2L` | 2026-05-11 |
+| `liquidity-pool-contract` | ✅ Yes | `CACKE7ML2BTOAGQTAAW5NEARHCFX4PXXKGEO6GMU6NHFBVYQFZRJS2BT` | 2026-05-11 |
+| `creditline-contract` | ✅ Yes | `CAQDHYG3TALPNXG466SZUMJEPOI7VYV732LPFF3GHE4ASPBCNMIQBS3X` | 2026-05-12 (redeployed) |
+
+Deployer: `GCOYDYSEHRCFWGXUCMPSQ3ODEY2LGMBSVKKCOFH4NRIK4DEEDSETH7BF`
+
+> ✅ Resolved 2026-07-17: The 2026-05-11 set above (deployer `GCOYDYSE...H7BF`,
+> = `stepfi-deployer` on the maintainer machine) is confirmed **live and correct**.
+> A reproducible `stellar contract build` of current `main` (multi-sig admin
+> included, commit `44a8c00`) produces bytecode whose SHA256 hashes match the
+> on-chain wasm of all five contracts above exactly — the contracts were created
+> in May and upgraded in place via their `upgrade()` functions as the source
+> evolved. All clients (web, landing, docs, live API `.well-known/stellar.toml`)
+> reference this set.
+>
+> The **second** deployment recorded on 2026-06-23 (deployer `GDL63O...Q4LH`) is
+> identified as an **orphaned experimental deploy**: its key is not recognized on
+> the maintainer machine, appears in no deploy script/env/shell-history, its
+> account was funded by testnet Friendbot immediately before deploy (no memo), and
+> its on-chain wasm matches no build of any branch in this repo. No client ever
+> referenced it. It is now recorded under `orphanedDeployment` in
+> `deployed-testnet.json` and marked DO NOT USE. Investigation into the origin of
+> the `GDL63O...` key is **ongoing**.
 
 > Update this table after running `scripts/deploy-testnet.sh`
 
